@@ -385,11 +385,6 @@ async def cb_support_group(callback: CallbackQuery):
     await callback.answer("رابط المجموعة: https://t.me/group", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("compare:"))
-async def cb_compare(callback: CallbackQuery):
-    await callback.answer("ميزة المقارنة قريباً 📊", show_alert=True)
-
-
 @router.callback_query(F.data.startswith("profile_info"))
 async def cb_profile_info(callback: CallbackQuery):
     await cb_my_profile(callback)
