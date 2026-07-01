@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
-from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject, Bot
+from aiogram import BaseMiddleware, Bot
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from sqlalchemy import select
 
