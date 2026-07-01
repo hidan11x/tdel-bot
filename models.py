@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    BigInteger,
     String,
     Text,
     UniqueConstraint,
@@ -27,7 +28,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(Integer, unique=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     first_name: Mapped[str] = mapped_column(String)
     language_code: Mapped[str] = mapped_column(String, default="ar")
@@ -288,3 +289,22 @@ class DataProviderLog(Base):
     response_time_ms: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class PortfolioPosition(Base):
+    __tablename__ = "portfolio_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    symbol: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)
+    entry_price: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[float] = mapped_column(Float)
+    side: Mapped[str] = mapped_column(String, default="long")
+    status: Mapped[str] = mapped_column(String, default="open")
+    exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    user: Mapped["User"] = relationship("User", backref="portfolio_positions")
