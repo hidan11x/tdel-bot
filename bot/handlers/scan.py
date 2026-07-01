@@ -1,0 +1,206 @@
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery, FSInputFile
+from sqlalchemy import select
+
+from database import get_session
+from models import User
+from services.scanner import scan_symbol, log_scan_to_db
+from services.subscriptions import can_scan, increment_scan
+from services.chart_generator import generate_chart
+from services.pdf_generator import generate_pdf_report
+from utils.formatter import format_technical_report
+from utils.validators import is_valid_symbol
+from bot.keyboards.main import (
+    timeframe_menu, symbol_actions, back_button,
+)
+
+from . import _user_context
+
+router = Router()
+
+MARKET_MAP = {
+    "saudi": "SAUDI",
+    "us": "US",
+    "crypto": "CRYPTO",
+}
+MARKET_DISPLAY = {
+    "SAUDI": "السوق السعودي",
+    "US": "السوق الأمريكي",
+    "CRYPTO": "العملات الرقمية",
+}
+MARKET_KEY_MAP = {
+    "SAUDI": "saudi",
+    "US": "us",
+    "CRYPTO": "crypto",
+}
+
+
+async def _get_user(telegram_id: int):
+    async with get_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        return result.scalar_one_or_none()
+
+
+async def _perform_scan_and_report(
+    callback: CallbackQuery,
+    user_id: int,
+    symbol: str,
+    market: str,
+    timeframe: str,
+):
+    can = await can_scan(user_id)
+    if not can:
+        text = "⚠️ لقد تجاوزت الحد اليومي للمسح الضوئي. يرجى الترقية إلى باقة مدفوعة."
+        await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
+        return
+
+    await callback.message.edit_text("جاري المسح الضوئي... 🔍")
+
+    try:
+        result = await scan_symbol(symbol, market, timeframe)
+    except Exception:
+        result = None
+
+    if not result:
+        err_text = f"❌ تعذر الحصول على بيانات كافية لـ {symbol}. تأكد من صحة الرمز وحاول مرة أخرى."
+        await callback.message.edit_text(err_text, reply_markup=back_button("main_menu"))
+        return
+
+    await increment_scan(user_id)
+
+    score_val = result.get("score")
+    score_num = float(score_val.overall) if score_val else None
+    price_val = result.get("current_price")
+    await log_scan_to_db(user_id, symbol, market, timeframe, score_num, price_val)
+
+    report = format_technical_report(result)
+
+    market_key = MARKET_KEY_MAP.get(market, market.lower())
+    kb = symbol_actions(symbol, market_key)
+
+    await callback.message.edit_text(report, reply_markup=kb)
+
+    try:
+        chart_path = generate_chart(symbol, market, timeframe)
+        if chart_path:
+            photo = FSInputFile(chart_path)
+            caption_text = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})"
+            await callback.message.answer_photo(photo, caption=caption_text)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("timeframe_scan:"))
+async def cb_timeframe_scan(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    symbol = parts[1]
+    market = parts[2]
+    timeframe = parts[3]
+
+    telegram_id = callback.from_user.id
+    user = await _get_user(telegram_id)
+    if not user:
+        await callback.message.edit_text("المستخدم غير موجود.")
+        return
+
+    await _perform_scan_and_report(callback, user.id, symbol, market, timeframe)
+
+
+@router.callback_query(F.data == "scan_quick")
+async def cb_scan_quick(callback: CallbackQuery):
+    await callback.answer()
+    from bot.keyboards.main import market_menu
+    text = "اختر السوق للمسح السريع:"
+    await callback.message.edit_text(text, reply_markup=market_menu())
+
+
+@router.callback_query(F.data.startswith("rescan:"))
+async def cb_rescan(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    symbol = parts[1]
+    market_key = parts[2].lower()
+    market = MARKET_MAP.get(market_key, parts[2].upper())
+
+    kb = timeframe_menu(market_key, f"timeframe_scan:{symbol}:{market}")
+    text = f"🔄 اختر الإطار الزمني لإعادة فحص {symbol}:"
+    await callback.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("export_pdf:"))
+async def cb_export_pdf(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    symbol = parts[1]
+    market = parts[2]
+
+    await callback.message.edit_text("📄 جاري إنشاء ملف PDF...")
+
+    result = await scan_symbol(symbol, market)
+    if not result:
+        await callback.message.edit_text(
+            f"❌ تعذر الحصول على بيانات لـ {symbol}.",
+            reply_markup=back_button("main_menu"),
+        )
+        return
+
+    filepath = generate_pdf_report(result)
+    if not filepath:
+        await callback.message.edit_text(
+            "❌ فشل إنشاء ملف PDF.",
+            reply_markup=back_button("main_menu"),
+        )
+        return
+
+    doc = FSInputFile(filepath)
+    await callback.message.answer_document(
+        doc,
+        caption=f"📄 {symbol} - التقرير الفني",
+    )
+
+    market_key = MARKET_KEY_MAP.get(market, market.lower())
+    report = format_technical_report(result)
+    kb = symbol_actions(symbol, market_key)
+    await callback.message.answer(report, reply_markup=kb)
+
+
+async def handle_symbol_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx:
+        return
+
+    context_type = ctx.get("context")
+    if context_type not in ("scan", "full_analysis"):
+        return
+
+    market = ctx.get("market", "US")
+    symbol = message.text.strip().upper()
+
+    if not is_valid_symbol(symbol):
+        await message.answer("❌ رمز الأصل غير صالح. أدخل رمزاً صحيحاً (مثال: 2222.SR، AAPL، BTCUSDT)")
+        return
+
+    user = await _get_user(telegram_id)
+    if not user:
+        await message.answer("المستخدم غير موجود.")
+        _user_context.pop(telegram_id, None)
+        return
+
+    can = await can_scan(user.id)
+    if not can:
+        await message.answer(
+            "⚠️ لقد تجاوزت الحد اليومي للمسح الضوئي. يرجى الترقية إلى باقة مدفوعة.",
+            reply_markup=back_button("main_menu"),
+        )
+        _user_context.pop(telegram_id, None)
+        return
+
+    market_key = MARKET_KEY_MAP.get(market, market.lower())
+    kb = timeframe_menu(market_key, f"timeframe_scan:{symbol}:{market}")
+
+    _user_context[telegram_id] = {"context": "scan", "market": market, "symbol": symbol}
+    await message.answer(f"📊 اختر الإطار الزمني لفحص {symbol}:", reply_markup=kb)

@@ -1,0 +1,935 @@
+from typing import Any
+from datetime import datetime, timedelta, timezone
+import random
+import string
+
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+from config import settings
+from database import get_session
+from models import User, ActivationCode, Coupon, AdminLog, Payment, ErrorLog, MarketSettings, SystemSettings, ScanLog, Symbol
+from sqlalchemy import select, delete, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from bot.keyboards import admin_menu, admin_users_actions, back_button, main_menu
+from services.symbols_service import (
+    get_all_symbols_admin, toggle_symbol_active, toggle_symbol_popular,
+    get_symbol_by_id, update_symbol, add_symbol,
+)
+
+router = Router()
+
+from . import _user_context
+
+
+class AdminStates(StatesGroup):
+    broadcast_text = State()
+    user_message = State()
+    add_code_plan = State()
+    add_code_duration = State()
+    add_code_max_uses = State()
+    add_code_expiry = State()
+    add_coupon_discount = State()
+    add_coupon_max_uses = State()
+    add_coupon_expiry = State()
+    extend_days = State()
+    user_search = State()
+    sym_edit_field = State()
+    sym_edit_value = State()
+    sym_add_market = State()
+    sym_add_symbol = State()
+    sym_add_yahoo = State()
+    sym_add_name_ar = State()
+    sym_add_name_en = State()
+    sym_add_sector = State()
+    sym_add_exchange = State()
+    sym_add_currency = State()
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in settings.admin_ids
+
+
+async def log_admin(admin_id: int, action: str, details: str = None):
+    async with get_session() as session:
+        async with session.begin():
+            session.add(AdminLog(admin_id=admin_id, action=action, details=details))
+
+
+def _code(length=10) -> str:
+    return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+
+@router.message(Command("admin"))
+async def cmd_admin(msg: Message):
+    if not is_admin(msg.from_user.id):
+        return await msg.reply("⛔ غير مصرح لك بهذا الأمر.")
+    await msg.answer("🔧 لوحة التحكم", reply_markup=admin_menu())
+
+
+@router.callback_query(F.data == "admin_panel")
+async def cb_admin_panel(cq: CallbackQuery):
+    if not is_admin(cq.from_user.id):
+        return await cq.answer("⛔ غير مصرح", show_alert=True)
+    await cq.message.edit_text("🔧 لوحة التحكم", reply_markup=admin_menu())
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("admin_"))
+async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
+    if not is_admin(cq.from_user.id):
+        return await cq.answer("⛔ غير مصرح", show_alert=True)
+    data = cq.data
+    if data == "admin_users":
+        await state.set_state(AdminStates.user_search)
+        await _admin_users(cq)
+    elif data == "admin_subs":
+        await _admin_subs(cq)
+    elif data == "admin_codes":
+        await _admin_codes_menu(cq)
+    elif data == "admin_stats":
+        await _admin_stats(cq)
+    elif data == "admin_settings":
+        await _admin_settings(cq)
+    elif data == "admin_broadcast":
+        await state.set_state(AdminStates.broadcast_text)
+        await cq.message.edit_text("📨 أرسل الرسالة التي تريد إرسالها لجميع المستخدمين:", reply_markup=back_button("admin_panel"))
+        await cq.answer()
+    elif data == "admin_markets":
+        await _admin_markets(cq)
+    elif data == "admin_logs":
+        await _admin_logs(cq)
+    elif data == "admin_maintenance":
+        await _admin_maintenance(cq)
+    elif data.startswith("admin_market_toggle:"):
+        await _admin_market_toggle(cq, data.split(":")[1])
+    elif data.startswith("admin_user_view:"):
+        await _admin_user_view(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_user_ban:"):
+        await _admin_user_ban(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_user_unban:"):
+        await _admin_user_unban(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_user_extend:"):
+        await state.update_data(target_user_id=int(data.split(":")[1]))
+        await state.set_state(AdminStates.extend_days)
+        await cq.message.edit_text("أدخل عدد الأيام للتمديد:", reply_markup=back_button("admin_panel"))
+        await cq.answer()
+    elif data == "admin_coupon_create":
+        await state.set_state(AdminStates.add_coupon_discount)
+        await cq.message.edit_text("أدخل نسبة الخصم (1-99):", reply_markup=back_button("admin_panel"))
+        await cq.answer()
+    elif data == "admin_codes_create":
+        await state.set_state(AdminStates.add_code_plan)
+        await cq.message.edit_text("اختر الخطة للكود:", reply_markup=back_button("admin_codes"))
+        await cq.answer()
+    elif data.startswith("admin_code_plan:"):
+        plan = data.split(":")[1]
+        await state.update_data(code_plan=plan)
+        await state.set_state(AdminStates.add_code_duration)
+        await cq.message.edit_text(f"أدخل مدة الكود بالأيام للخطة {plan}:", reply_markup=back_button("admin_codes"))
+        await cq.answer()
+    elif data.startswith("admin_code_disable:"):
+        await _admin_code_disable(cq, int(data.split(":")[1]))
+    elif data == "admin_indicators":
+        await _admin_indicators(cq)
+    elif data == "admin_coupons":
+        await _admin_coupons_menu(cq)
+    elif data.startswith("admin_coupon_disable:"):
+        await _admin_coupon_disable(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_user_page:"):
+        await _admin_users_page(cq, int(data.split(":")[1]))
+    elif data == "admin_health":
+        await _admin_health(cq)
+    elif data == "admin_symbols":
+        await _admin_symbols_menu(cq)
+    elif data.startswith("admin_sym_page:"):
+        await _admin_symbols_page(cq, data.split(":")[1] if len(data.split(":")) > 1 else None, int(data.split(":")[-1]))
+    elif data.startswith("admin_sym_toggle:"):
+        await _admin_sym_toggle(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_sym_popular:"):
+        await _admin_sym_popular(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_sym_market:"):
+        parts = data.split(":")
+        market = parts[1]
+        page = int(parts[2]) if len(parts) > 2 else 1
+        await _admin_symbols_page(cq, market, page)
+    elif data.startswith("admin_sym_view:"):
+        await _admin_sym_view(cq, int(data.split(":")[1]))
+    elif data.startswith("admin_sym_edit_field:"):
+        parts = data.split(":")
+        await state.update_data(sym_id=int(parts[1]), sym_field=parts[2])
+        await state.set_state(AdminStates.sym_edit_value)
+        field_names = {"name_ar": "الاسم العربي", "name_en": "الاسم الإنجليزي", "sector": "القطاع", "symbol": "الرمز", "yahoo_symbol": "رمز ياهو"}
+        fname = field_names.get(parts[2], parts[2])
+        await cq.message.edit_text(f"✏️ أدخل القيمة الجديدة لـ {fname}:", reply_markup=back_button("admin_panel"))
+        await cq.answer()
+    elif data == "admin_sym_add":
+        await state.set_state(AdminStates.sym_add_market)
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📈 السوق السعودي", callback_data="admin_sym_add_market:SAUDI")
+        builder.button(text="🇺🇸 السوق الأمريكي", callback_data="admin_sym_add_market:US")
+        builder.button(text="₿ العملات الرقمية", callback_data="admin_sym_add_market:CRYPTO")
+        builder.button(text="↩️ رجوع", callback_data="admin_symbols")
+        builder.adjust(2)
+        await cq.message.edit_text("اختر السوق للرمز الجديد:", reply_markup=builder.as_markup())
+        await cq.answer()
+    elif data.startswith("admin_sym_add_market:"):
+        market = data.split(":")[1]
+        await state.update_data(sym_market=market)
+        await state.set_state(AdminStates.sym_add_symbol)
+        await cq.message.edit_text(f"أدخل الرمز (مثال: 2222.SR, AAPL, BTCUSDT):", reply_markup=back_button("admin_symbols"))
+        await cq.answer()
+    elif data.startswith("admin_sym_export:"):
+        await _admin_sym_export(cq, data.split(":")[1])
+    elif data == "admin_sym_import":
+        text = "📥 **استيراد رموز من CSV**\n\nأرسل ملف CSV بالتنسيق:\n`symbol,yahoo_symbol,name_ar,name_en,sector,exchange,currency`\n\nيجب أن يكون السطر الأول عناوين الأعمدة."
+        await cq.message.edit_text(text, reply_markup=back_button("admin_symbols"))
+        _user_context[cq.from_user.id] = {"context": "admin_sym_import"}
+        await cq.answer()
+    else:
+        await cq.answer("تحت التطوير", show_alert=True)
+
+
+PAGE_SIZE = 10
+
+
+async def _admin_users(cq: CallbackQuery):
+    await _admin_users_page(cq, 1)
+
+
+async def _admin_users_page(cq: CallbackQuery, page: int):
+    async with get_session() as session:
+        total = (await session.execute(select(func.count(User.id)))).scalar() or 0
+        offset = (page - 1) * PAGE_SIZE
+        result = await session.execute(
+            select(User).order_by(User.id.desc()).offset(offset).limit(PAGE_SIZE)
+        )
+        users = result.scalars().all()
+
+        text = f"👥 **المستخدمون** (صفحة {page}):\n\n"
+        for u in users:
+            status = "✅" if u.is_active else "⛔"
+            ban = "🚫" if u.is_banned else ""
+            text += f"{status}{ban} ID: {u.telegram_id} | {u.first_name[:15]} | {u.plan}\n"
+        text += f"\nإجمالي: {total}\nللبحث أرسل ID المستخدم"
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    if page > 1:
+        builder.button(text="⬅️ السابق", callback_data=f"admin_user_page:{page - 1}")
+    if offset + PAGE_SIZE < total:
+        builder.button(text="التالي ➡️", callback_data=f"admin_user_page:{page + 1}")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(2)
+    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_user_view(cq: CallbackQuery, telegram_id: int):
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        u = result.scalar_one_or_none()
+        if not u:
+            return await cq.answer("المستخدم غير موجود", show_alert=True)
+        text = (
+            f"👤 معلومات المستخدم\n"
+            f"ID: {u.telegram_id}\n"
+            f"الاسم: {u.first_name}\n"
+            f"اليوزر: @{u.username or '—'}\n"
+            f"الخطة: {u.plan}\n"
+            f"الاشتراك: {u.subscription_start} → {u.subscription_end}\n"
+            f"الحالة: {'نشط' if u.is_active else 'غير نشط'}{' | محظور' if u.is_banned else ''}\n"
+            f"الفحوصات اليوم: {u.scans_today}\n"
+            f"آخر دخول: {u.last_active}"
+        )
+    await cq.message.edit_text(text, reply_markup=admin_users_actions(telegram_id))
+    await cq.answer()
+
+
+async def _admin_user_ban(cq: CallbackQuery, telegram_id: int):
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            u = result.scalar_one_or_none()
+            if u:
+                u.is_banned = True
+    await log_admin(cq.from_user.id, f"ban_{telegram_id}")
+    await cq.answer("✅ تم الحظر", show_alert=True)
+    await _admin_user_view(cq, telegram_id)
+
+
+async def _admin_user_unban(cq: CallbackQuery, telegram_id: int):
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            u = result.scalar_one_or_none()
+            if u:
+                u.is_banned = False
+    await log_admin(cq.from_user.id, f"unban_{telegram_id}")
+    await cq.answer("✅ تم فك الحظر", show_alert=True)
+    await _admin_user_view(cq, telegram_id)
+
+
+async def _admin_subs(cq: CallbackQuery):
+    async with get_session() as session:
+        total = (await session.execute(select(func.count(User.id)))).scalar()
+        active = (await session.execute(select(func.count(User.id)).where(User.subscription_end > datetime.now(timezone.utc)))).scalar()
+        plan_counts = {}
+        for p in ["free", "basic", "pro", "vip", "lifetime"]:
+            cnt = (await session.execute(select(func.count(User.id)).where(User.plan == p))).scalar()
+            plan_counts[p] = cnt
+        rev_result = await session.execute(select(func.sum(Payment.amount)).where(Payment.status == "completed"))
+        revenue = rev_result.scalar() or 0
+    text = (
+        "💳 **الاشتراكات**\n\n"
+        f"إجمالي المستخدمين: {total}\n"
+        f"الاشتراكات النشطة: {active}\n\n"
+        f"Free: {plan_counts['free']}\n"
+        f"Basic: {plan_counts['basic']}\n"
+        f"Pro: {plan_counts['pro']}\n"
+        f"VIP: {plan_counts['vip']}\n"
+        f"Lifetime: {plan_counts['lifetime']}\n\n"
+        f"إجمالي الإيرادات: {revenue:.2f} SAR"
+    )
+    await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_codes_menu(cq: CallbackQuery):
+    async with get_session() as session:
+        result = await session.execute(select(ActivationCode).order_by(ActivationCode.id.desc()).limit(10))
+        codes = result.scalars().all()
+        text = "🔑 **أكواد التفعيل**\n\n"
+        for c in codes:
+            active = "✅" if c.is_active else "❌"
+            text += f"{active} {c.code} | {c.plan} | {c.uses}/{c.max_uses}\n"
+    text += "\nاختر إجراء:"
+    from bot.keyboards.main import back_button
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ إنشاء كود", callback_data="admin_codes_create")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(1)
+    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_code_disable(cq: CallbackQuery, code_id: int):
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(ActivationCode).where(ActivationCode.id == code_id))
+            c = result.scalar_one_or_none()
+            if c:
+                c.is_active = not c.is_active
+    await cq.answer("✅ تم التحديث", show_alert=True)
+    await _admin_codes_menu(cq)
+
+
+async def _admin_stats(cq: CallbackQuery):
+    async with get_session() as session:
+        today = datetime.now(timezone.utc).date()
+        scans_today = (await session.execute(
+            select(func.count()).select_from(ScanLog).where(func.date(ScanLog.created_at) == today)
+        )).scalar() or 0
+        errors_today = (await session.execute(
+            select(func.count()).select_from(ErrorLog).where(func.date(ErrorLog.created_at) == today)
+        )).scalar() or 0
+        total_scans = (await session.execute(select(func.count()).select_from(ScanLog))).scalar() or 0
+        total_users = (await session.execute(select(func.count(User.id)))).scalar() or 0
+    text = (
+        "📊 **إحصائيات النظام**\n\n"
+        f"إجمالي المستخدمين: {total_users}\n"
+        f"إجمالي الفحوصات: {total_scans}\n"
+        f"فحوصات اليوم: {scans_today}\n"
+        f"أخطاء اليوم: {errors_today}\n"
+    )
+    await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_health(cq: CallbackQuery):
+    import time, importlib
+    checks = []
+    db_ok = False
+    try:
+        async with get_session() as session:
+            await session.execute(select(func.count(User.id)))
+            db_ok = True
+    except Exception as e:
+        checks.append(f"❌ قاعدة البيانات: {e}")
+    if db_ok:
+        checks.append("✅ قاعدة البيانات: متصلة")
+    try:
+        import yfinance
+        checks.append(f"✅ yfinance: {yfinance.__version__}")
+    except Exception:
+        checks.append("❌ yfinance: غير مثبت")
+    try:
+        import binance
+        checks.append(f"✅ Binance: {binance.__version__}")
+    except Exception:
+        checks.append("⚠️ Binance: غير مثبت")
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        checks.append("✅ APScheduler: متاح")
+    except Exception:
+        checks.append("❌ APScheduler: غير مثبت")
+    import sys
+    checks.append(f"🐍 Python: {sys.version.split()[0]}")
+    text = "🩺 **صحة النظام**\n\n" + "\n".join(checks)
+    await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_settings(cq: CallbackQuery):
+    async with get_session() as session:
+        result = await session.execute(select(SystemSettings))
+        s = result.scalars().all()
+        text = "⚙️ **الإعدادات**\n\n"
+        for item in s:
+            text += f"• {item.key}: {item.value}\n"
+        text += "\nللحصول على الإعدادات الجديدة أعد تشغيل البوت"
+    await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_markets(cq: CallbackQuery):
+    async with get_session() as session:
+        result = await session.execute(select(MarketSettings))
+        markets = result.scalars().all()
+        if not markets:
+            async with session.begin():
+                for m in ["saudi", "us", "crypto"]:
+                    session.add(MarketSettings(market=m, is_enabled=True))
+                await session.flush()
+            result = await session.execute(select(MarketSettings))
+            markets = result.scalars().all()
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    for m in markets:
+        status = "✅ مفعل" if m.is_enabled else "❌ معطل"
+        builder.button(text=f"{m.market}: {status}", callback_data=f"admin_market_toggle:{m.market}")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(1)
+    await cq.message.edit_text("📈 **الأسواق**\nاضغط للتبديل:", reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_market_toggle(cq: CallbackQuery, market: str):
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(MarketSettings).where(MarketSettings.market == market))
+            m = result.scalar_one_or_none()
+            if m:
+                m.is_enabled = not m.is_enabled
+    await log_admin(cq.from_user.id, f"toggle_market_{market}")
+    await _admin_markets(cq)
+
+
+async def _admin_logs(cq: CallbackQuery):
+    async with get_session() as session:
+        result = await session.execute(select(ErrorLog).order_by(ErrorLog.id.desc()).limit(20))
+        logs = result.scalars().all()
+        text = "📜 **السجلات** (آخر 20 خطأ)\n\n"
+        if not logs:
+            text += "لا توجد أخطاء"
+        for log in logs:
+            text += f"• [{log.created_at}] {log.source}: {log.message[:100]}\n"
+    await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_maintenance(cq: CallbackQuery):
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(SystemSettings).where(SystemSettings.key == "maintenance"))
+            s = result.scalar_one_or_none()
+            if s:
+                s.value = "false" if s.value == "true" else "true"
+            else:
+                session.add(SystemSettings(key="maintenance", value="true"))
+    await log_admin(cq.from_user.id, "toggle_maintenance")
+    await cq.answer("✅ تم التبديل", show_alert=True)
+    await _admin_settings(cq)
+
+
+@router.message(AdminStates.broadcast_text)
+async def handle_broadcast_text(msg: Message, state: FSMContext):
+    text = msg.text
+    await state.update_data(broadcast_text=text)
+    await msg.answer(
+        f"📨 سيتم إرسال هذه الرسالة لجميع المستخدمين:\n\n{text}\n\nللتأكيد أرسل /confirm",
+        reply_markup=back_button("admin_panel"),
+    )
+    await state.set_state(AdminStates.broadcast_text)
+
+
+@router.message(Command("confirm"), StateFilter(AdminStates.broadcast_text))
+async def confirm_broadcast(msg: Message, state: FSMContext):
+    data = await state.get_data()
+    text = data.get("broadcast_text", "")
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.is_banned == False))
+        users = result.scalars().all()
+    bot = Bot.get_current()
+    sent = 0
+    for u in users:
+        try:
+            await bot.send_message(u.telegram_id, f"📨 رسالة إدارية\n\n{text}")
+            sent += 1
+        except Exception:
+            pass
+    await msg.answer(f"✅ تم الإرسال لـ {sent} مستخدم")
+    await log_admin(msg.from_user.id, f"broadcast_{sent}")
+    await state.clear()
+
+
+@router.message(AdminStates.extend_days)
+async def handle_extend_days(msg: Message, state: FSMContext):
+    try:
+        days = int(msg.text)
+    except ValueError:
+        return await msg.answer("❌ الرجاء إدخال رقم صحيح")
+    data = await state.get_data()
+    telegram_id = data.get("target_user_id")
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            u = result.scalar_one_or_none()
+            if u:
+                if u.subscription_end and u.subscription_end > datetime.now(timezone.utc):
+                    u.subscription_end += timedelta(days=days)
+                else:
+                    u.subscription_end = datetime.now(timezone.utc) + timedelta(days=days)
+    await log_admin(msg.from_user.id, f"extend_{telegram_id}_{days}d")
+    await msg.answer(f"✅ تم تمديد اشتراك المستخدم {days} يوم")
+    await state.clear()
+
+
+@router.message(AdminStates.add_code_duration)
+async def handle_code_duration(msg: Message, state: FSMContext):
+    try:
+        days = int(msg.text)
+    except ValueError:
+        return await msg.answer("❌ الرجاء إدخال رقم صحيح")
+    await state.update_data(code_duration=days)
+    await state.set_state(AdminStates.add_code_max_uses)
+    await msg.answer("أدخل الحد الأقصى لاستخدامات الكود (1-1000):", reply_markup=back_button("admin_codes"))
+
+
+@router.message(AdminStates.add_code_max_uses)
+async def handle_code_max_uses(msg: Message, state: FSMContext):
+    try:
+        max_uses = int(msg.text)
+    except ValueError:
+        return await msg.answer("❌ الرجاء إدخال رقم صحيح")
+    data = await state.get_data()
+    code = _code()
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(User).where(User.telegram_id == msg.from_user.id))
+            admin = result.scalar_one_or_none()
+            ac = ActivationCode(
+                code=code,
+                plan=data["code_plan"],
+                duration_days=data["code_duration"],
+                max_uses=max_uses,
+                created_by=admin.id if admin else 0,
+            )
+            session.add(ac)
+    await log_admin(msg.from_user.id, f"create_code_{data['code_plan']}")
+    await msg.answer(f"✅ تم إنشاء الكود:\n\n`{code}`\n\nالخطة: {data['code_plan']}\nالمدة: {data['code_duration']} يوم\nالاستخدامات: {max_uses}")
+    await state.clear()
+
+
+@router.message(AdminStates.user_search)
+async def handle_user_search(msg: Message, state: FSMContext):
+    query = msg.text.strip()
+    async with get_session() as session:
+        try:
+            tid = int(query)
+            result = await session.execute(select(User).where(User.telegram_id == tid))
+            u = result.scalar_one_or_none()
+        except ValueError:
+            result = await session.execute(
+                select(User).where(
+                    User.username.ilike(f"%{query}%")
+                ).limit(10)
+            )
+            users = result.scalars().all()
+            if len(users) == 0:
+                return await msg.answer("❌ لا يوجد مستخدم بهذا الاسم.")
+            u = users[0] if len(users) == 1 else None
+
+        if not u:
+            return await msg.answer("❌ المستخدم غير موجود.", reply_markup=back_button("admin_panel"))
+
+    from bot.keyboards.main import admin_users_actions
+    text = (
+        f"👤 معلومات المستخدم\n"
+        f"ID: {u.telegram_id}\n"
+        f"الاسم: {u.first_name}\n"
+        f"اليوزر: @{u.username or '—'}\n"
+        f"الخطة: {u.plan}\n"
+        f"الاشتراك: {u.subscription_start} → {u.subscription_end}\n"
+        f"الحالة: {'نشط' if u.is_active else 'غير نشط'}{' | محظور' if u.is_banned else ''}\n"
+        f"الفحوصات اليوم: {u.scans_today}\n"
+        f"التقارير اليومية: {'مفعلة' if getattr(u, 'daily_report', True) else 'معطلة'}\n"
+        f"آخر دخول: {u.last_active}"
+    )
+    await msg.answer(text, reply_markup=admin_users_actions(u.telegram_id))
+    await state.clear()
+
+
+async def _admin_indicators(cq: CallbackQuery):
+    text = (
+        "📋 **المؤشرات الفنية المتاحة:**\n\n"
+        "• RSI (14) - القوة النسبية\n"
+        "• MACD (12, 26, 9) - التقاطع\n"
+        "• EMA (20, 50, 200) - المتوسطات\n"
+        "• SMA (20, 50, 200) - المتوسطات البسيطة\n"
+        "• Bollinger Bands (20, 2) - التذبذب\n"
+        "• ATR (14) - التقلب\n"
+        "• Volume (20) - الحجم النسبي\n"
+        "• Support/Resistance - الدعم والمقاومة\n"
+        "• Trend Detection - اكتشاف الاتجاه\n\n"
+        "🔧 التحليل الفني يعمل تلقائياً على جميع الرموز."
+    )
+    await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_coupons_menu(cq: CallbackQuery):
+    async with get_session() as session:
+        result = await session.execute(select(Coupon).order_by(Coupon.id.desc()).limit(10))
+        coupons = result.scalars().all()
+        text = "🎫 **كوبونات الخصم**\n\n"
+        if not coupons:
+            text += "لا توجد كوبونات."
+        for c in coupons:
+            status = "✅" if c.is_active else "❌"
+            text += f"{status} {c.code} | خصم %{c.discount_percent:.0f} | {c.uses}/{c.max_uses}\n"
+    text += "\nاختر إجراء:"
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ إنشاء كوبون", callback_data="admin_coupon_create")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(1)
+    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_coupon_disable(cq: CallbackQuery, coupon_id: int):
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(select(Coupon).where(Coupon.id == coupon_id))
+            c = result.scalar_one_or_none()
+            if c:
+                c.is_active = not c.is_active
+    await cq.answer("✅ تم التحديث", show_alert=True)
+    await _admin_coupons_menu(cq)
+
+
+@router.message(AdminStates.add_coupon_discount)
+async def handle_coupon_discount(msg: Message, state: FSMContext):
+    try:
+        discount = float(msg.text)
+        if discount < 1 or discount > 99:
+            raise ValueError
+    except ValueError:
+        return await msg.answer("❌ الرجاء إدخال رقم بين 1 و 99")
+    await state.update_data(coupon_discount=discount)
+    await state.set_state(AdminStates.add_coupon_max_uses)
+    await msg.answer("أدخل الحد الأقصى للاستخدامات (1-1000):", reply_markup=back_button("admin_panel"))
+
+
+@router.message(AdminStates.add_coupon_max_uses)
+async def handle_coupon_max_uses(msg: Message, state: FSMContext):
+    try:
+        max_uses = int(msg.text)
+        if max_uses < 1 or max_uses > 1000:
+            raise ValueError
+    except ValueError:
+        return await msg.answer("❌ الرجاء إدخال رقم بين 1 و 1000")
+    data = await state.get_data()
+    code = _code(8)
+    async with get_session() as session:
+        async with session.begin():
+            coupon = Coupon(
+                code=code,
+                discount_percent=data["coupon_discount"],
+                max_uses=max_uses,
+            )
+            session.add(coupon)
+    await log_admin(msg.from_user.id, f"create_coupon_%{data['coupon_discount']}")
+    await msg.answer(
+        f"✅ تم إنشاء الكوبون:\n\n`{code}`\n\nالخصم: %{data['coupon_discount']:.0f}\nالاستخدامات: {max_uses}"
+    )
+    await state.clear()
+
+
+async def _admin_symbols_menu(cq: CallbackQuery):
+    text = "🔣 **إدارة الرموز**\n\nاختر السوق للتصفح والإدارة:"
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📈 السوق السعودي", callback_data="admin_sym_market:SAUDI")
+    builder.button(text="🇺🇸 السوق الأمريكي", callback_data="admin_sym_market:US")
+    builder.button(text="₿ العملات الرقمية", callback_data="admin_sym_market:CRYPTO")
+    builder.button(text="➕ إضافة رمز", callback_data="admin_sym_add")
+    builder.button(text="📥 استيراد CSV", callback_data="admin_sym_import")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(2, 2, 1)
+    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_symbols_page(cq: CallbackQuery, market: str, page: int):
+    symbols, current_page, total_pages, total = await get_all_symbols_admin(market, page)
+    text = f"🔣 **{market}** - صفحة {current_page}/{total_pages} (إجمالي: {total})\n\n"
+    if not symbols:
+        text += "لا توجد رموز."
+    for s in symbols:
+        active = "✅" if s.is_active else "❌"
+        pop = "⭐" if s.is_popular else "  "
+        text += f"{active}{pop} {s.symbol} - {s.name_ar[:15]} ({s.sector})\n"
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    nav_row = []
+    if page > 1:
+        nav_row.append(("⬅️ السابق", f"admin_sym_market:{market}:{page - 1}"))
+    if page < total_pages:
+        nav_row.append(("التالي ➡️", f"admin_sym_market:{market}:{page + 1}"))
+    for text, cb in nav_row:
+        builder.button(text=text, callback_data=cb)
+    builder.button(text="📥 تصدير CSV", callback_data=f"admin_sym_export:{market}")
+    builder.button(text="➕ إضافة رمز", callback_data="admin_sym_add")
+    builder.button(text="↩️ رجوع", callback_data="admin_symbols")
+    builder.adjust(2, 2)
+    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_sym_view(cq: CallbackQuery, symbol_id: int):
+    s = await get_symbol_by_id(symbol_id)
+    if not s:
+        await cq.answer("الرمز غير موجود", show_alert=True)
+        return
+    text = (
+        f"🔣 **{s.symbol}** - {s.name_ar}\n"
+        f"{'─' * 20}\n"
+        f"Name EN: {s.name_en}\n"
+        f"رمز ياهو: {s.yahoo_symbol}\n"
+        f"القطاع: {s.sector}\n"
+        f"السوق: {s.market}\n"
+        f"البورصة: {s.exchange or '—'}\n"
+        f"العملة: {s.currency}\n"
+        f"النوع: {s.asset_type}\n"
+        f"الحالة: {'🟢 نشط' if s.is_active else '🔴 معطل'}\n"
+        f"مشهور: {'⭐' if s.is_popular else '—'}\n"
+        f"الترتيب: {s.sort_order}"
+    )
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 تفعيل/تعطيل", callback_data=f"admin_sym_toggle:{s.id}")
+    builder.button(text="⭐ مشهور/عادي", callback_data=f"admin_sym_popular:{s.id}")
+    builder.button(text="✏️ تعديل الاسم العربي", callback_data=f"admin_sym_edit_field:{s.id}:name_ar")
+    builder.button(text="✏️ تعديل الاسم الإنجليزي", callback_data=f"admin_sym_edit_field:{s.id}:name_en")
+    builder.button(text="✏️ تعديل القطاع", callback_data=f"admin_sym_edit_field:{s.id}:sector")
+    builder.button(text="✏️ تعديل الرمز", callback_data=f"admin_sym_edit_field:{s.id}:symbol")
+    builder.button(text="✏️ تعديل رمز ياهو", callback_data=f"admin_sym_edit_field:{s.id}:yahoo_symbol")
+    builder.button(text="↩️ رجوع", callback_data=f"admin_sym_market:{s.market}:1")
+    builder.adjust(2, 2, 2, 1)
+    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_sym_toggle(cq: CallbackQuery, symbol_id: int):
+    result = await toggle_symbol_active(symbol_id)
+    await cq.answer("✅ تم التبديل" if result else "❌ الرمز غير موجود", show_alert=True)
+    if result:
+        await _admin_sym_view(cq, symbol_id)
+
+
+async def _admin_sym_popular(cq: CallbackQuery, symbol_id: int):
+    result = await toggle_symbol_popular(symbol_id)
+    await cq.answer("✅ تم التبديل" if result else "❌ الرمز غير موجود", show_alert=True)
+    if result:
+        await _admin_sym_view(cq, symbol_id)
+
+
+async def _admin_sym_export(cq: CallbackQuery, market: str):
+    import csv, io
+    async with get_session() as session:
+        stmt = select(Symbol).where(Symbol.market == market).order_by(Symbol.id)
+        result = await session.execute(stmt)
+        symbols = result.scalars().all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["symbol", "yahoo_symbol", "name_ar", "name_en", "sector", "exchange", "currency", "asset_type", "is_active", "is_popular", "sort_order"])
+    for s in symbols:
+        writer.writerow([s.symbol, s.yahoo_symbol, s.name_ar, s.name_en, s.sector, s.exchange or "", s.currency, s.asset_type, str(s.is_active), str(s.is_popular), str(s.sort_order)])
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    from aiogram.types import BufferedInputFile
+    file = BufferedInputFile(csv_bytes, filename=f"symbols_{market.lower()}.csv")
+    await cq.message.answer_document(file, caption=f"📥 تصدير رموز {market}")
+    await cq.answer()
+
+
+@router.message(AdminStates.sym_edit_value)
+async def handle_sym_edit_value(msg: Message, state: FSMContext):
+    data = await state.get_data()
+    symbol_id = data.get("sym_id")
+    field = data.get("sym_field")
+    value = msg.text.strip()
+    field_map = {"name_ar": value, "name_en": value, "sector": value, "symbol": value, "yahoo_symbol": value}
+    kw = {field: value}
+    result = await update_symbol(symbol_id, **kw)
+    if result:
+        await log_admin(msg.from_user.id, f"edit_sym_{symbol_id}_{field}")
+        await msg.answer(f"✅ تم تحديث {field} بنجاح.")
+    else:
+        await msg.answer("❌ فشل التحديث.")
+    await state.clear()
+    s = await get_symbol_by_id(symbol_id)
+    if s:
+        await msg.answer(f"🔣 {s.symbol} - {s.name_ar}", reply_markup=back_button(f"admin_sym_market:{s.market}:1"))
+
+
+@router.message(AdminStates.sym_add_symbol)
+async def handle_sym_add_symbol(msg: Message, state: FSMContext):
+    await state.update_data(sym_symbol=msg.text.strip().upper())
+    await state.set_state(AdminStates.sym_add_yahoo)
+    await msg.answer("أدخل رمز ياهو المالي (مثال: 2222.SR, AAPL, BTCUSDT):", reply_markup=back_button("admin_symbols"))
+
+
+@router.message(AdminStates.sym_add_yahoo)
+async def handle_sym_add_yahoo(msg: Message, state: FSMContext):
+    await state.update_data(sym_yahoo=msg.text.strip())
+    await state.set_state(AdminStates.sym_add_name_ar)
+    await msg.answer("أدخل الاسم العربي:", reply_markup=back_button("admin_symbols"))
+
+
+@router.message(AdminStates.sym_add_name_ar)
+async def handle_sym_add_name_ar(msg: Message, state: FSMContext):
+    await state.update_data(sym_name_ar=msg.text.strip())
+    await state.set_state(AdminStates.sym_add_name_en)
+    await msg.answer("أدخل الاسم الإنجليزي:", reply_markup=back_button("admin_symbols"))
+
+
+@router.message(AdminStates.sym_add_name_en)
+async def handle_sym_add_name_en(msg: Message, state: FSMContext):
+    await state.update_data(sym_name_en=msg.text.strip())
+    await state.set_state(AdminStates.sym_add_sector)
+    data = await state.get_data()
+    market = data.get("sym_market", "")
+    from services.symbols_service import get_sectors
+    sectors = get_sectors(market)
+    if sectors:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        builder = InlineKeyboardBuilder()
+        for sec in sectors:
+            builder.button(text=sec, callback_data=f"admin_sym_pick_sector:{sec}")
+        builder.button(text="✏️ إدخال يدوي", callback_data="admin_sym_manual_sector")
+        builder.button(text="↩️ رجوع", callback_data="admin_symbols")
+        builder.adjust(2)
+        await msg.answer(f"اختر القطاع لـ {market}:", reply_markup=builder.as_markup())
+    else:
+        await msg.answer("أدخل اسم القطاع:", reply_markup=back_button("admin_symbols"))
+
+
+@router.callback_query(F.data.startswith("admin_sym_pick_sector:"))
+async def cb_admin_sym_pick_sector(cq: CallbackQuery, state: FSMContext):
+    sector = cq.data.split(":", 1)[1]
+    await state.update_data(sym_sector=sector)
+    await state.set_state(AdminStates.sym_add_exchange)
+    await cq.message.edit_text("أدخل اسم البورصة (مثل: Saudi, NASDAQ, Binance) - أو أرسل /skip:", reply_markup=back_button("admin_symbols"))
+    await cq.answer()
+
+
+@router.callback_query(F.data == "admin_sym_manual_sector")
+async def cb_admin_sym_manual_sector(cq: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminStates.sym_add_sector)
+    await cq.message.edit_text("أدخل اسم القطاع:", reply_markup=back_button("admin_symbols"))
+    await cq.answer()
+
+
+@router.message(AdminStates.sym_add_sector)
+async def handle_sym_add_sector_text(msg: Message, state: FSMContext):
+    await state.update_data(sym_sector=msg.text.strip())
+    await state.set_state(AdminStates.sym_add_exchange)
+    await msg.answer("أدخل اسم البورصة (أو أرسل /skip):", reply_markup=back_button("admin_symbols"))
+
+
+@router.message(AdminStates.sym_add_exchange)
+async def handle_sym_add_exchange(msg: Message, state: FSMContext):
+    text = msg.text.strip()
+    if text == "/skip":
+        await state.update_data(sym_exchange=None)
+    else:
+        await state.update_data(sym_exchange=text)
+    await state.set_state(AdminStates.sym_add_currency)
+    await msg.answer("أدخل العملة (مثل: SAR, USD) أو /skip للافتراضي:", reply_markup=back_button("admin_symbols"))
+
+
+@router.message(AdminStates.sym_add_currency)
+async def handle_sym_add_currency(msg: Message, state: FSMContext):
+    text = msg.text.strip()
+    data = await state.get_data()
+    currency = None if text == "/skip" else text.upper()
+    s = await add_symbol(
+        market=data["sym_market"],
+        symbol=data["sym_symbol"],
+        yahoo_symbol=data["sym_yahoo"],
+        name_ar=data["sym_name_ar"],
+        name_en=data["sym_name_en"],
+        sector=data.get("sym_sector", ""),
+        exchange=data.get("sym_exchange"),
+        currency=currency,
+    )
+    await log_admin(msg.from_user.id, f"add_sym_{s.symbol}")
+    await msg.answer(f"✅ تمت إضافة الرمز بنجاح:\n{s.symbol} - {s.name_ar}")
+    await state.clear()
+
+
+@router.message(F.document, F.from_user.id.in_(settings.admin_ids))
+async def handle_admin_csv_import(msg: Message):
+    ctx = _user_context.get(msg.from_user.id, {})
+    if ctx.get("context") != "admin_sym_import":
+        return
+    import csv, io, tempfile, os
+    from aiogram.types import BufferedInputFile
+    file = await msg.bot.download(msg.document)
+    content = file.read().decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(content))
+    count = 0
+    errors = []
+    async with get_session() as session:
+        async with session.begin():
+            for row in reader:
+                try:
+                    sym = Symbol(
+                        market=row.get("market", "SAUDI").upper(),
+                        symbol=row.get("symbol", "").strip().upper(),
+                        yahoo_symbol=row.get("yahoo_symbol", row.get("symbol", "")).strip(),
+                        name_ar=row.get("name_ar", row.get("symbol", "")).strip(),
+                        name_en=row.get("name_en", row.get("symbol", "")).strip(),
+                        sector=row.get("sector", "").strip(),
+                        exchange=row.get("exchange", "").strip() or None,
+                        currency=row.get("currency", "SAR").strip().upper(),
+                        asset_type=row.get("asset_type", "stock").strip(),
+                        is_active=row.get("is_active", "True").strip().lower() == "true",
+                        is_popular=row.get("is_popular", "False").strip().lower() == "true",
+                    )
+                    session.add(sym)
+                    count += 1
+                except Exception as e:
+                    errors.append(f"سطر {reader.line_num}: {e}")
+    _user_context.pop(msg.from_user.id, None)
+    text = f"✅ تم استيراد {count} رمز بنجاح."
+    if errors:
+        text += f"\n\n❌ أخطاء ({len(errors)}):\n" + "\n".join(errors[:5])
+    await msg.answer(text)
