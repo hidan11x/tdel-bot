@@ -53,7 +53,10 @@ async def _get_user(telegram_id: int):
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, command=None):
+async def cmd_start(message: Message, command=None, state=None):
+    if state:
+        await state.clear()
+    _user_context.pop(message.from_user.id, None)
     telegram_id = message.from_user.id
 
     ref_code = None

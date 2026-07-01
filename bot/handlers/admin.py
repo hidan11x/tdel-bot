@@ -61,9 +61,11 @@ def _code(length=10) -> str:
 
 
 @router.message(Command("admin"))
-async def cmd_admin(msg: Message):
+async def cmd_admin(msg: Message, state: FSMContext = None):
     if not is_admin(msg.from_user.id):
         return await msg.reply("⛔ غير مصرح لك بهذا الأمر.")
+    if state:
+        await state.clear()
     await msg.answer("🔧 لوحة التحكم", reply_markup=admin_menu())
 
 
@@ -545,11 +547,24 @@ async def handle_extend_days(msg: Message, state: FSMContext):
 @router.message(AdminStates.add_code_plan)
 async def handle_create_code_all_in_one(msg: Message, state: FSMContext):
     text = msg.text.strip()
+
+    if text.startswith("/"):
+        await state.clear()
+        if text == "/admin":
+            if not is_admin(msg.from_user.id):
+                return
+            await msg.answer("🔧 لوحة التحكم", reply_markup=admin_menu())
+        return
+
     parts = text.split()
 
     if len(parts) < 3:
         await msg.answer(
-            "❌ الصيغة خاطئة.\n\nاكتب: الخطة المدة الاستخدامات\nمثال: basic 30d 1"
+            "❌ الصيغة خاطئة.\n\nاكتب: الخطة المدة الاستخدامات\nمثال: basic 30d 1\n\n"
+            "الخطة: basic / pro / vip / lifetime\n"
+            "المدة: 30d (أيام) أو 12h (ساعات) أو permanent (دايم)\n"
+            "الاستخدامات: رقم (1 = لمرة وحدة)\n\n"
+            "أو أرسل /admin للرجوع للقائمة"
         )
         return
 
