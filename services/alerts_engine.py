@@ -1,13 +1,75 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 
-from sqlalchemy import select, and_, update
+from sqlalchemy import select
+from loguru import logger
 
 from database import get_session
 from models import Alert, User, DailyUsage
 from services.market_data import get_close_prices, get_current_price_sync, get_ohlcv
 from services.indicators import calculate_rsi, find_support_resistance
+from services.scanner import scan_symbol
+from services.signal_engine import build_signal
+from services.symbols_service import get_symbol_info
 from config import settings
+
+
+ALERT_TYPE_NAMES = {
+    "price_above": "السعر أعلى من",
+    "price_below": "السعر أدنى من",
+    "rsi_above": "RSI أعلى من",
+    "rsi_below": "RSI أدنى من",
+    "volume_spike": "ارتفاع حاد في الحجم",
+    "near_support": "اقتراب من الدعم",
+    "near_resistance": "اقتراب من المقاومة",
+    "price_change_percent": "نسبة تغير السعر",
+}
+
+
+_ALERT_DEDUP_WINDOW = timedelta(hours=6)
+_ALERT_DEDUP_MEMORY: Dict[str, datetime] = {}
+
+
+def _dedup_key(user_id: int, symbol: str, market: str) -> str:
+    return f"{user_id}:{symbol.upper()}:{market.upper()}"
+
+
+def _is_duplicate_recent(user_id: int, symbol: str, market: str, now_dt: datetime) -> bool:
+    key = _dedup_key(user_id, symbol, market)
+    previous = _ALERT_DEDUP_MEMORY.get(key)
+    if not previous:
+        return False
+    return (now_dt - previous) < _ALERT_DEDUP_WINDOW
+
+
+def _remember_alert(user_id: int, symbol: str, market: str, now_dt: datetime) -> None:
+    key = _dedup_key(user_id, symbol, market)
+    _ALERT_DEDUP_MEMORY[key] = now_dt
+
+
+async def _enrich_with_signal(alert_payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = await scan_symbol(alert_payload["symbol"], alert_payload["market"], "1d")
+    if not result:
+        return alert_payload
+
+    signal = build_signal(result)
+    alert_payload["confidence"] = signal.confidence
+    alert_payload["score"] = signal.score
+    alert_payload["rating"] = signal.rating
+    alert_payload["risk_level"] = signal.risk_level
+    alert_payload["warnings"] = list(signal.warnings)
+
+    if signal.risk_level in ("مرتفع", "عالي", "عالي جداً"):
+        warning_text = "⚠️ المخاطرة مرتفعة، الإشارة للمتابعة فقط وتحتاج تاكيد."
+        alert_payload["risk_warning"] = warning_text
+
+    return alert_payload
+
+
+def _is_signal_strong(alert_payload: Dict[str, Any]) -> bool:
+    score = float(alert_payload.get("score") or 0.0)
+    confidence = int(alert_payload.get("confidence") or 0)
+    return score >= 60 or confidence >= 60
 
 
 async def check_alerts() -> List[Dict[str, Any]]:
@@ -24,11 +86,32 @@ async def check_alerts() -> List[Dict[str, Any]]:
         try:
             triggered_alert = await _check_single_alert(alert)
             if triggered_alert:
+                now_dt = datetime.now(timezone.utc)
+                triggered_alert = await _enrich_with_signal(triggered_alert)
+
+                if not _is_signal_strong(triggered_alert):
+                    logger.info(
+                        "Skip weak alert user_id={} symbol={} market={}",
+                        alert.user_id,
+                        alert.symbol,
+                        alert.market,
+                    )
+                    continue
+
+                if _is_duplicate_recent(alert.user_id, alert.symbol, alert.market, now_dt):
+                    logger.info(
+                        "Skip duplicate alert in dedup window user_id={} symbol={} market={}",
+                        alert.user_id,
+                        alert.symbol,
+                        alert.market,
+                    )
+                    continue
+
                 async with get_session() as s:
                     alert_obj = await s.get(Alert, alert.id)
                     if alert_obj:
                         alert_obj.triggered = True
-                        alert_obj.triggered_at = datetime.now(timezone.utc)
+                        alert_obj.triggered_at = now_dt
                     today = date.today()
                     dq = select(DailyUsage).where(
                         DailyUsage.user_id == alert.user_id,
@@ -37,10 +120,12 @@ async def check_alerts() -> List[Dict[str, Any]]:
                     dr = await s.execute(dq)
                     daily = dr.scalar_one_or_none()
                     if daily:
-                        daily.alerts_triggered = DailyUsage.alerts_triggered + 1
+                        daily.alerts_triggered = (daily.alerts_triggered or 0) + 1
                     await s.commit()
+                _remember_alert(alert.user_id, alert.symbol, alert.market, now_dt)
                 triggered.append(triggered_alert)
         except Exception:
+            logger.exception("Failed while checking alert id={}", alert.id)
             continue
 
     return triggered
@@ -107,7 +192,7 @@ async def _check_single_alert(alert: Alert) -> Optional[Dict[str, Any]]:
             extra["change_percent"] = change
 
     if triggered:
-        return {
+        payload = {
             "alert_id": alert.id,
             "user_id": alert.user_id,
             "symbol": alert.symbol,
@@ -118,6 +203,7 @@ async def _check_single_alert(alert: Alert) -> Optional[Dict[str, Any]]:
             "extra": extra,
             "triggered_at": datetime.now(timezone.utc).isoformat(),
         }
+        return payload
     return None
 
 
@@ -151,3 +237,84 @@ async def get_user_alerts(user_id: int) -> List[Alert]:
         stmt = select(Alert).where(Alert.user_id == user_id).order_by(Alert.created_at.desc())
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+
+async def get_user_telegram_id(user_id: int) -> Optional[int]:
+    async with get_session() as session:
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        return user.telegram_id if user else None
+
+
+def _format_price_simple(value) -> str:
+    if value is None:
+        return "غير متوفر"
+    try:
+        v = float(value)
+    except Exception:
+        return str(value)
+    if v >= 1000:
+        return f"{v:,.2f}"
+    if v >= 1:
+        return f"{v:.4f}"
+    return f"{v:.6f}"
+
+
+def format_alert_message(alert_payload: Dict[str, Any], name_ar: str = None, sector: str = None) -> str:
+    symbol = alert_payload.get("symbol", "")
+    market = alert_payload.get("market", "")
+    alert_type = alert_payload.get("alert_type", "")
+    value = alert_payload.get("value")
+    current_price = alert_payload.get("current_price")
+    extra = alert_payload.get("extra", {})
+    confidence = alert_payload.get("confidence")
+    risk_level = alert_payload.get("risk_level", "")
+    risk_warning = alert_payload.get("risk_warning")
+    warnings = alert_payload.get("warnings", [])
+
+    display_name = name_ar or symbol
+    type_name = ALERT_TYPE_NAMES.get(alert_type, alert_type)
+    market_label = {"SAUDI": "السعودي", "US": "الأمريكي", "CRYPTO": "الرقمية"}.get(market, market)
+
+    lines = [
+        "🔔 تنبيه نشط\n",
+        f"🏷 الأصل: {display_name}",
+        f"🔢 الرمز: {symbol}",
+        f"🌍 السوق: {market_label}",
+    ]
+    if sector:
+        lines.append(f"🏢 القطاع: {sector}")
+    lines.append(f"{'─' * 22}")
+    lines.append(f"📋 نوع التنبيه: {type_name}")
+    lines.append(f"🎯 القيمة المستهدفة: {_format_price_simple(value)}")
+    lines.append(f"💰 السعر الحالي: {_format_price_simple(current_price)}")
+
+    if extra:
+        if "rsi" in extra:
+            lines.append(f"📊 RSI الحالي: {extra['rsi']:.1f}")
+        if "change_percent" in extra:
+            change = extra["change_percent"]
+            sign = "+" if change >= 0 else ""
+            lines.append(f"📈 نسبة التغير: {sign}{change:.2f}%")
+        if "distance_pct" in extra:
+            lines.append(f"📏 المسافة: {extra['distance_pct']:.1f}%")
+        if "volume" in extra:
+            lines.append(f"📦 الحجم: {_format_price_simple(extra['volume'])}")
+
+    if confidence is not None:
+        lines.append(f"🎯 الثقة: {confidence}/100")
+
+    if risk_level:
+        lines.append(f"⚠️ المخاطرة: {risk_level}")
+
+    if risk_warning:
+        lines.append(f"\n{risk_warning}")
+    elif warnings:
+        lines.append("\nتحذيرات:")
+        for w in warnings[:3]:
+            lines.append(f"* {w}")
+
+    lines.append("\nهذا تنبيه آلي تعليمي وليس توصية مالية.")
+    return "\n".join(lines)

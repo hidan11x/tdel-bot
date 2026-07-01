@@ -31,9 +31,9 @@ def _list(key: str, default: str = "") -> List[int]:
 
 @dataclass
 class Settings:
-    bot_token: str = field(default_factory=lambda: _env("BOT_TOKEN"))
+    bot_token: str = field(default_factory=lambda: _env("BOT_TOKEN") or _env("TELEGRAM_BOT_TOKEN"))
     admin_ids: List[int] = field(default_factory=lambda: _list("ADMIN_IDS", "8601339909"))
-    database_url: str = field(default_factory=lambda: _env("DATABASE_URL", "sqlite+aiosqlite:///data/bot.db"))
+    database_url: str = field(default_factory=lambda: _env("DATABASE_URL", "sqlite+aiosqlite:///data/bot.db").replace("postgres://", "postgresql://", 1))
 
     yfinance_enabled: bool = field(default_factory=lambda: _env("YFINANCE_ENABLED", "true").lower() == "true")
     binance_enabled: bool = field(default_factory=lambda: _env("BINANCE_ENABLED", "true").lower() == "true")
@@ -63,6 +63,16 @@ class Settings:
     trial_days: int = field(default_factory=lambda: _int("TRIAL_DAYS", 7))
 
     chart_theme: str = field(default_factory=lambda: _env("CHART_THEME", "dark"))
+
+    def validate(self) -> None:
+        if not self.bot_token:
+            raise ValueError(
+                "BOT_TOKEN is not set. Set BOT_TOKEN or TELEGRAM_BOT_TOKEN in .env file."
+            )
+        if not self.database_url:
+            raise ValueError(
+                "DATABASE_URL is not set. Check your .env file."
+            )
 
 
 settings = Settings()

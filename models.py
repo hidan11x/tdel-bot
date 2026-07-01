@@ -247,6 +247,20 @@ class Symbol(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
+    aliases: Mapped[list["SymbolAlias"]] = relationship("SymbolAlias", back_populates="symbol", cascade="all, delete-orphan")
+
+
+class SymbolAlias(Base):
+    __tablename__ = "symbol_aliases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol_id: Mapped[int] = mapped_column(Integer, ForeignKey("symbols.id", ondelete="CASCADE"))
+    alias: Mapped[str] = mapped_column(String)
+    language: Mapped[str] = mapped_column(String, default="ar")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    symbol: Mapped["Symbol"] = relationship("Symbol", back_populates="aliases")
+
 
 class SupportTicket(Base):
     __tablename__ = "support_tickets"

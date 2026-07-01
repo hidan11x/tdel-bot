@@ -2,6 +2,7 @@ import asyncio
 import sys
 from pathlib import Path
 from contextlib import suppress
+from typing import Optional
 
 from loguru import logger
 from aiogram import Bot, Dispatcher
@@ -30,7 +31,7 @@ from services.scheduler import ReportScheduler
 
 BASE_DIR = Path(__file__).resolve().parent
 
-scheduler: ReportScheduler = None
+scheduler: Optional[ReportScheduler] = None
 
 
 async def on_startup(bot: Bot) -> None:
@@ -71,6 +72,11 @@ async def on_shutdown(bot: Bot) -> None:
 
 async def main() -> None:
     logger.remove()
+
+    (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
+    (BASE_DIR / "data" / "charts").mkdir(parents=True, exist_ok=True)
+    (BASE_DIR / "data" / "logs").mkdir(parents=True, exist_ok=True)
+
     logger.add(
         sys.stdout,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> - <level>{message}</level>",
@@ -83,10 +89,7 @@ async def main() -> None:
         level="DEBUG",
     )
 
-    (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
-    (BASE_DIR / "data" / "charts").mkdir(parents=True, exist_ok=True)
-    (BASE_DIR / "data" / "logs").mkdir(parents=True, exist_ok=True)
-
+    settings.validate()
     await init_db()
 
     bot = Bot(

@@ -3,16 +3,22 @@ from typing import List, Optional
 from functools import wraps
 
 import requests
+from loguru import logger
 import yfinance as yf
 
 from config import settings
+from services.cache import cache, market_cache_key
 
 MAP_INTERVAL = {"15min": "15m", "30min": "30m", "1h": "60m", "4h": "4h", "1d": "1d", "1wk": "1wk"}
+BINANCE_INTERVAL = {"15min": "15m", "30min": "30m", "1h": "1h", "4h": "4h", "1d": "1d", "1wk": "1w"}
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 
 MAX_RETRIES = 3
 RETRY_DELAY = 1.5
+CLOSE_PRICES_TTL = 60
+OHLCV_TTL = 60
+CURRENT_PRICE_TTL = 30
 
 
 def _retry(func):
@@ -25,7 +31,9 @@ def _retry(func):
             except Exception as e:
                 last_error = e
                 if attempt < MAX_RETRIES:
+                    logger.warning("Retry {}/{} for {}: {}", attempt, MAX_RETRIES, func.__name__, e)
                     time.sleep(RETRY_DELAY * attempt)
+        logger.error("All {} retries failed for {}: {}", MAX_RETRIES, func.__name__, last_error)
         raise last_error
     return wrapper
 
@@ -110,7 +118,7 @@ class BinanceProvider:
     @_retry
     def get_historical(symbol: str, interval: str, limit: int = 200) -> Optional[List[dict]]:
         sym = BinanceProvider._normalize_symbol(symbol)
-        mapped = MAP_INTERVAL.get(interval, interval)
+        mapped = BINANCE_INTERVAL.get(interval, interval)
         params = {"symbol": sym, "interval": mapped, "limit": limit}
         resp = requests.get(BINANCE_KLINES_URL, params=params, timeout=15)
         resp.raise_for_status()
@@ -147,6 +155,11 @@ class DataProviderFactory:
 
 
 def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 200) -> List[float]:
+    cache_key = market_cache_key("closes", market, symbol, interval, outputsize)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
     provider = DataProviderFactory.get_provider(market)
     if isinstance(provider, BinanceProvider):
         data = provider.get_historical(symbol, interval, outputsize)
@@ -158,21 +171,44 @@ def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 
             data = None
     if not data:
         return []
-    return [d["close"] for d in data]
+    closes = [d["close"] for d in data]
+    cache.set(cache_key, list(closes), CLOSE_PRICES_TTL)
+    return closes
 
 
 def get_ohlcv(symbol: str, market: str, interval: str, outputsize: int = 200) -> Optional[List[dict]]:
+    cache_key = market_cache_key("ohlcv", market, symbol, interval, outputsize)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
     provider = DataProviderFactory.get_provider(market)
     if isinstance(provider, BinanceProvider):
-        return provider.get_historical(symbol, interval, outputsize)
-    result = provider.get_historical(symbol, interval, period="6mo", market=market)
-    if result:
-        return result["data"][-outputsize:]
-    return None
+        data = provider.get_historical(symbol, interval, outputsize)
+    else:
+        result = provider.get_historical(symbol, interval, period="6mo", market=market)
+        if result:
+            data = result["data"][-outputsize:]
+        else:
+            data = None
+
+    if data is not None:
+        cache.set(cache_key, list(data), OHLCV_TTL)
+    return data
 
 
 def get_current_price_sync(symbol: str, market: str) -> Optional[float]:
+    cache_key = market_cache_key("price", market, symbol, "spot", 1)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return float(cached)
+
     provider = DataProviderFactory.get_provider(market)
     if isinstance(provider, BinanceProvider):
-        return provider.get_current_price(symbol)
-    return provider.get_current_price(symbol, market)
+        price = provider.get_current_price(symbol)
+    else:
+        price = provider.get_current_price(symbol, market)
+
+    if price is not None:
+        cache.set(cache_key, float(price), CURRENT_PRICE_TTL)
+    return price

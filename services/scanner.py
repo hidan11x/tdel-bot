@@ -1,26 +1,32 @@
+import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone, date
 
 import pandas as pd
-from sqlalchemy import select, func
+from loguru import logger
+from sqlalchemy import select
 
 from database import get_session
-from models import User, Watchlist, Alert, DailyUsage, ScanLog
+from models import User, Watchlist, DailyUsage, ScanLog
 from services.market_data import get_close_prices, get_ohlcv, get_current_price_sync
-from services.indicators import calculate_all, find_support_resistance, detect_trend
+from services.signal_engine import build_signal
+from services.indicators import calculate_all, find_support_resistance
 from services.scoring import calculate_score, get_rating, get_risk_level, generate_summary
-from services.compliance import add_disclaimer, disclaimer
+from services.compliance import disclaimer
 from config import settings
 
 
 async def scan_symbol(symbol: str, market: str, timeframe: str = "1d") -> Optional[Dict[str, Any]]:
     try:
-        closes = get_close_prices(symbol, market, timeframe, outputsize=250)
+        from services.symbols_service import get_symbol_info
+        sym_info = await get_symbol_info(symbol, market)
+
+        closes = await asyncio.to_thread(get_close_prices, symbol, market, timeframe, 250)
         if not closes or len(closes) < 30:
             return None
 
-        ohlcv = get_ohlcv(symbol, market, timeframe, outputsize=250)
-        current_price = get_current_price_sync(symbol, market)
+        ohlcv = await asyncio.to_thread(get_ohlcv, symbol, market, timeframe, 250)
+        current_price = await asyncio.to_thread(get_current_price_sync, symbol, market)
         if current_price is None and closes:
             current_price = closes[-1]
 
@@ -47,6 +53,9 @@ async def scan_symbol(symbol: str, market: str, timeframe: str = "1d") -> Option
             "symbol": symbol,
             "market": market,
             "timeframe": timeframe,
+            "name_ar": sym_info["name_ar"] if sym_info else symbol,
+            "name_en": sym_info["name_en"] if sym_info else symbol,
+            "sector": sym_info["sector"] if sym_info else None,
             "current_price": current_price,
             "change_percent": change_percent,
             "trend": trend,
@@ -61,7 +70,82 @@ async def scan_symbol(symbol: str, market: str, timeframe: str = "1d") -> Option
             "scanned_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
+        logger.exception("Failed to scan symbol={} market={} timeframe={}", symbol, market, timeframe)
         return None
+
+
+async def scan_symbol_multi_timeframe(symbol: str, market: str) -> Optional[Dict[str, Any]]:
+    timeframes = ["15min", "1h", "1d"]
+    scans = await asyncio.gather(
+        *(scan_symbol(symbol, market, tf) for tf in timeframes),
+        return_exceptions=True,
+    )
+
+    valid_results: Dict[str, Dict[str, Any]] = {}
+    signals: Dict[str, Any] = {}
+    trend_counts: Dict[str, int] = {}
+    confidence_values: List[int] = []
+    reasons: List[str] = []
+    warnings: List[str] = []
+
+    for idx, item in enumerate(scans):
+        tf = timeframes[idx]
+        if isinstance(item, Exception):
+            logger.warning("Multi-timeframe scan failed for {} {} {}", market, symbol, tf)
+            warnings.append(f"تعذر جلب بيانات فريم {tf}.")
+            continue
+        if not item:
+            warnings.append(f"بيانات فريم {tf} غير كافية.")
+            continue
+
+        valid_results[tf] = item
+        signal = build_signal(item)
+        signals[tf] = signal
+        trend = str(item.get("trend", "sideways")).lower()
+        trend_counts[trend] = trend_counts.get(trend, 0) + 1
+
+        confidence_values.append(signal.confidence)
+        reasons.extend(signal.reasons)
+        warnings.extend(signal.warnings)
+
+    if not valid_results:
+        return None
+
+    dominant_trend = "mixed"
+    if trend_counts:
+        trend, cnt = max(trend_counts.items(), key=lambda pair: pair[1])
+        dominant_trend = trend if cnt >= 2 else "mixed"
+
+    avg_confidence = int(round(sum(confidence_values) / len(confidence_values))) if confidence_values else 40
+    if dominant_trend != "mixed" and len(valid_results) >= 2:
+        avg_confidence = min(100, avg_confidence + 8)
+        reasons.append("اتفاق جيد بين الفريمات يدعم الاتجاه.")
+    else:
+        avg_confidence = max(0, avg_confidence - 12)
+        warnings.append("الفريمات متضاربة وتحتاج تاكيد.")
+
+    best_timeframe = max(
+        valid_results.keys(),
+        key=lambda tf: signals[tf].confidence,
+    )
+    best_signal = signals[best_timeframe]
+
+    unique_reasons = list(dict.fromkeys(reasons))[:6]
+    unique_warnings = list(dict.fromkeys(warnings))[:6]
+
+    return {
+        "symbol": symbol,
+        "market": market,
+        "trend": dominant_trend,
+        "confidence": avg_confidence,
+        "rating": best_signal.rating,
+        "risk_level": best_signal.risk_level,
+        "timeframes": valid_results,
+        "reasons": unique_reasons,
+        "warnings": unique_warnings,
+        "best_timeframe": best_timeframe,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 async def scan_watchlist(user_id: int) -> List[Dict[str, Any]]:
@@ -97,7 +181,8 @@ async def get_top_movers(market: str, count: int = 10) -> List[Dict[str, Any]]:
             result = await scan_symbol(sym, market_key)
             if result:
                 results.append(result)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to scan {} {}: {}", market, sym, e)
             continue
     results.sort(key=lambda r: float(r["score"].overall) if r.get("score") else 0, reverse=True)
     return results[:count]
@@ -112,7 +197,8 @@ async def get_highest_volume(market: str, count: int = 10) -> List[Dict[str, Any
             result = await scan_symbol(sym, market_key)
             if result:
                 results.append(result)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to scan {} {}: {}", market, sym, e)
             continue
     results.sort(key=lambda r: r.get("indicators", {}).get("volume", 0) or 0, reverse=True)
     return results[:count]
@@ -138,7 +224,7 @@ async def log_scan_to_db(user_id: int, symbol: str, market: str, timeframe: str,
         result = await session.execute(stmt)
         daily = result.scalar_one_or_none()
         if daily:
-            daily.scans = DailyUsage.scans + 1
+            daily.scans = (daily.scans or 0) + 1
         else:
             daily = DailyUsage(user_id=user_id, date=today, scans=1)
             session.add(daily)
@@ -147,7 +233,7 @@ async def log_scan_to_db(user_id: int, symbol: str, market: str, timeframe: str,
         result = await session.execute(stmt)
         user = result.scalar_one_or_none()
         if user:
-            user.scans_today = User.scans_today + 1
+            user.scans_today = (user.scans_today or 0) + 1
             user.last_scan_date = today
 
         await session.commit()

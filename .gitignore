@@ -2,10 +2,7 @@
 __pycache__/
 *.pyc
 .env
-data/bot.db
-data/charts/
-data/logs/
-data/pdfs/
+data/
 bot_output.log
 bot_error.log
 bot_running.log
@@ -26,3 +23,5 @@ paper_wallet.py
 saudi_client.py
 .DS_Store
 Thumbs.db
+test_*.py
+.env.local

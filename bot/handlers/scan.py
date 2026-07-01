@@ -5,10 +5,10 @@ from sqlalchemy import select
 from database import get_session
 from models import User
 from services.scanner import scan_symbol, log_scan_to_db
+from services.signal_engine import build_signal, format_signal_message
 from services.subscriptions import can_scan, increment_scan
 from services.chart_generator import generate_chart
 from services.pdf_generator import generate_pdf_report
-from utils.formatter import format_technical_report
 from utils.validators import is_valid_symbol
 from bot.keyboards.main import (
     timeframe_menu, symbol_actions, back_button,
@@ -75,7 +75,8 @@ async def _perform_scan_and_report(
     price_val = result.get("current_price")
     await log_scan_to_db(user_id, symbol, market, timeframe, score_num, price_val)
 
-    report = format_technical_report(result)
+    signal = build_signal(result)
+    report = format_signal_message(signal)
 
     market_key = MARKET_KEY_MAP.get(market, market.lower())
     kb = symbol_actions(symbol, market_key)
@@ -83,10 +84,11 @@ async def _perform_scan_and_report(
     await callback.message.edit_text(report, reply_markup=kb)
 
     try:
-        chart_path = generate_chart(symbol, market, timeframe)
+        chart_path = generate_chart(symbol, market, timeframe, name=result.get("name_ar"))
         if chart_path:
             photo = FSInputFile(chart_path)
-            caption_text = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})"
+            name = result.get("name_ar") or symbol
+            caption_text = f"📉 {name} — {symbol} ({timeframe})"
             await callback.message.answer_photo(photo, caption=caption_text)
     except Exception:
         pass
@@ -162,7 +164,8 @@ async def cb_export_pdf(callback: CallbackQuery):
     )
 
     market_key = MARKET_KEY_MAP.get(market, market.lower())
-    report = format_technical_report(result)
+    signal = build_signal(result)
+    report = format_signal_message(signal)
     kb = symbol_actions(symbol, market_key)
     await callback.message.answer(report, reply_markup=kb)
 
@@ -178,11 +181,20 @@ async def handle_symbol_input(message: Message):
         return
 
     market = ctx.get("market", "US")
-    symbol = message.text.strip().upper()
+    raw_text = message.text.strip()
+    symbol = raw_text.upper()
 
     if not is_valid_symbol(symbol):
-        await message.answer("❌ رمز الأصل غير صالح. أدخل رمزاً صحيحاً (مثال: 2222.SR، AAPL، BTCUSDT)")
-        return
+        from services.search_engine import auto_detect_symbol
+        detected = await auto_detect_symbol(raw_text)
+        if detected:
+            symbol = detected["symbol"]
+            market = detected["market"]
+        else:
+            await message.answer(
+                "❌ تعذر التعرف على الرمز. أدخل رمزاً صحيحاً أو اسم الشركة\nمثال: 2222.SR، AAPL، BTCUSDT، الراجحي، Apple"
+            )
+            return
 
     user = await _get_user(telegram_id)
     if not user:

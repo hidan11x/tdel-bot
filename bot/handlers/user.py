@@ -13,11 +13,12 @@ from bot.keyboards.main import (
 from utils.formatter import format_profile, format_technical_report
 from services.subscriptions import get_plan_limits
 from services.scanner import scan_symbol, TOP_SYMBOLS
+from services.signal_engine import build_signal, format_signal_message
 from services.symbols_service import (
     get_sectors, get_popular_symbols, get_symbols_by_sector,
     get_all_symbols_by_market, search_symbols, get_symbol_by_id, get_sectors_count,
 )
-from services.search_engine import smart_search, format_search_results, build_search_keyboard
+from services.search_engine import smart_search, format_search_results, build_search_keyboard, auto_detect_symbol
 
 from . import _user_context
 from .scan import handle_symbol_input
@@ -474,12 +475,13 @@ async def cb_symbol_detail(callback: CallbackQuery):
     text = (
         f"🔍 {sym.name_ar}\n"
         f"{'─' * 20}\n"
-        f"الإسم: {sym.name_ar}\n"
+        f"🏷 الاسم: {sym.name_ar}\n"
         f"Name: {sym.name_en}\n"
-        f"الرمز: {sym.symbol}\n"
-        f"قطاع: {sym.sector}\n"
-        f"السوق: {sym.market}\n"
-        f"حالة: 🟢 نشط" if sym.is_active else "حالة: 🔴 غير نشط"
+        f"🔢 الرمز: {sym.symbol}\n"
+        f"🏢 القطاع: {sym.sector}\n"
+        f"🌍 السوق: {sym.market}\n"
+        f"{'─' * 20}\n"
+        f"اختر الإجراء:"
     )
     await callback.message.edit_text(text, reply_markup=symbol_detail_menu(symbol_id))
 
@@ -499,19 +501,164 @@ async def cb_smart_result(callback: CallbackQuery):
     if not sym:
         await callback.message.edit_text("⚠️ الرمز غير موجود.", reply_markup=back_button("symbol_browser"))
         return
-    text = (
-        f"🔍 **{sym.name_ar}**\n"
-        f"{'─' * 20}\n"
-        f"الرمز: {sym.symbol}\n"
-        f"السوق: {sym.market}\n"
-        f"القطاع: {sym.sector}\n"
-        f"السعر الحالي: ⏳"
+
+    market_label = MARKET_DISPLAY.get(sym.market.lower(), sym.market)
+    sector_line = f"🏢 القطاع: {sym.sector}\n" if sym.sector else ""
+
+    from bot.keyboards.main import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📊 فحص فني", callback_data=f"quick_scan_sym:{sym.symbol}:{sym.market}")
+    builder.button(text="📈 عرض الشارت", callback_data=f"quick_chart:{sym.symbol}:{sym.market}")
+    builder.button(text="🔔 إنشاء تنبيه", callback_data=f"alert_create:{sym.symbol}:{sym.market.lower()}")
+    builder.button(text="⭐ إضافة للمراقبة", callback_data=f"watch_add:{sym.symbol}:{sym.market.lower()}")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(2, 2, 1)
+
+    card = (
+        f"وجدت النتيجة التالية:\n\n"
+        f"🏷 {sym.name_ar}\n"
+        f"🔢 {sym.symbol}\n"
+        f"🌍 السوق {market_label}\n"
+        f"{sector_line}\n"
+        f"اختر الإجراء:"
     )
-    await callback.message.edit_text(text, reply_markup=symbol_detail_menu(symbol_id))
+    await callback.message.edit_text(card, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("quick_scan_sym:"))
+async def cb_quick_scan_sym(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":", 2)
+    symbol = parts[1]
+    market = parts[2]
+
+    await callback.message.edit_text(f"📊 جاري تحليل {symbol}...")
+
+    try:
+        result = await scan_symbol(symbol, market, "1d")
+    except Exception:
+        result = None
+
+    if not result:
+        await callback.message.edit_text(
+            f"❌ تعذر الحصول على بيانات لـ {symbol}.",
+            reply_markup=back_button("main_menu"),
+        )
+        return
+
+    from services.subscriptions import can_scan, increment_scan
+    from services.scanner import log_scan_to_db
+    from bot.keyboards.main import symbol_actions
+
+    user = await _get_user(callback.from_user.id)
+    if user:
+        can = await can_scan(user.id)
+        if not can:
+            await callback.message.edit_text(
+                "⚠️ لقد تجاوزت الحد اليومي للمسح الضوئي. يرجى الترقية إلى باقة مدفوعة.",
+                reply_markup=back_button("main_menu"),
+            )
+            return
+        await increment_scan(user.id)
+        score_val = result.get("score")
+        score_num = float(score_val.overall) if score_val else None
+        price_val = result.get("current_price")
+        await log_scan_to_db(user.id, symbol, market, "1d", score_num, price_val)
+
+    signal = build_signal(result)
+    report = format_signal_message(signal)
+
+    market_key = market.lower()
+    kb = symbol_actions(symbol, market_key)
+    await callback.message.edit_text(report, reply_markup=kb)
+
+    try:
+        from services.chart_generator import generate_chart
+        from aiogram.types import FSInputFile
+        name = result.get("name_ar") or symbol
+        chart_path = generate_chart(symbol, market, "1d", name=name)
+        if chart_path:
+            photo = FSInputFile(chart_path)
+            await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("quick_chart:"))
+async def cb_quick_chart(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":", 2)
+    symbol = parts[1]
+    market = parts[2]
+
+    await callback.message.edit_text(f"📈 جاري إنشاء الشارت لـ {symbol}...")
+
+    try:
+        from services.chart_generator import generate_chart
+        from services.symbols_service import get_symbol_info
+        from aiogram.types import FSInputFile
+
+        info = await get_symbol_info(symbol, market)
+        name = info["name_ar"] if info else symbol
+        chart_path = generate_chart(symbol, market, "1d", name=name)
+        if chart_path:
+            photo = FSInputFile(chart_path)
+            await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
+            await callback.message.edit_text(f"📈 شارت {name} — {symbol}", reply_markup=back_button("main_menu"))
+        else:
+            await callback.message.edit_text(
+                f"❌ تعذر إنشاء الشارت لـ {symbol}.",
+                reply_markup=back_button("main_menu"),
+            )
+    except Exception:
+        await callback.message.edit_text(
+            f"❌ حدث خطأ أثناء إنشاء الشارت.",
+            reply_markup=back_button("main_menu"),
+        )
 
 
 async def _auto_search(message: Message, query: str):
     msg = await message.answer(f"🔍 جاري البحث عن '{query}'...")
+
+    detected = await auto_detect_symbol(query)
+
+    if detected and detected.get("alternatives"):
+        results = await smart_search(query)
+        if results:
+            text = format_search_results(results)
+            kb = build_search_keyboard(results)
+            await msg.edit_text(text, reply_markup=kb)
+            return
+
+    if detected and detected.get("source") in ("db", "crypto_map", "pattern"):
+        symbol = detected["symbol"]
+        market = detected["market"]
+        name = detected.get("name_ar") or detected.get("name_en") or symbol
+        sector = detected.get("sector")
+
+        sector_line = f"🏢 القطاع: {sector}\n" if sector else ""
+        market_label = MARKET_DISPLAY.get(market.lower(), market)
+
+        from bot.keyboards.main import InlineKeyboardBuilder
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📊 فحص فني", callback_data=f"quick_scan_sym:{symbol}:{market}")
+        builder.button(text="📈 عرض الشارت", callback_data=f"quick_chart:{symbol}:{market}")
+        builder.button(text="🔔 إنشاء تنبيه", callback_data=f"alert_create:{symbol}:{market.lower()}")
+        builder.button(text="⭐ إضافة للمراقبة", callback_data=f"watch_add:{symbol}:{market.lower()}")
+        builder.button(text="↩️ رجوع", callback_data="main_menu")
+        builder.adjust(2, 2, 1)
+
+        card = (
+            f"وجدت النتيجة التالية:\n\n"
+            f"🏷 {name}\n"
+            f"🔢 {symbol}\n"
+            f"🌍 السوق {market_label}\n"
+            f"{sector_line}\n"
+            f"اختر الإجراء:"
+        )
+        await msg.edit_text(card, reply_markup=builder.as_markup())
+        return
+
     results = await smart_search(query)
     if not results:
         await msg.edit_text(

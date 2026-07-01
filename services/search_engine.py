@@ -361,6 +361,104 @@ def _detect_market(query: str) -> str:
     return "SAUDI"
 
 
+CRYPTO_SYMBOL_MAP = {
+    "btc": "BTCUSDT", "bitcoin": "BTCUSDT", "بيتكوين": "BTCUSDT", "بتكوين": "BTCUSDT",
+    "eth": "ETHUSDT", "ethereum": "ETHUSDT", "ايثريوم": "ETHUSDT", "اثريوم": "ETHUSDT", "ايثر": "ETHUSDT",
+    "sol": "SOLUSDT", "solana": "SOLUSDT", "سولانا": "SOLUSDT",
+    "xrp": "XRPUSDT", "ripple": "XRPUSDT", "ريبل": "XRPUSDT",
+    "doge": "DOGEUSDT", "dogecoin": "DOGEUSDT", "دوجكوين": "DOGEUSDT", "دوج": "DOGEUSDT",
+    "ada": "ADAUSDT", "cardano": "ADAUSDT", "كاردانو": "ADAUSDT",
+    "bnb": "BNBUSDT", "binance": "BNBUSDT", "بينانس": "BNBUSDT",
+    "link": "LINKUSDT", "chainlink": "LINKUSDT",
+    "matic": "MATICUSDT", "polygon": "MATICUSDT", "بوليجون": "MATICUSDT",
+    "avax": "AVAXUSDT", "avalanche": "AVAXUSDT", "افالانش": "AVAXUSDT",
+    "ltc": "LTCUSDT", "litecoin": "LTCUSDT", "ليتكوين": "LTCUSDT",
+}
+
+
+async def auto_detect_symbol(query: str) -> Optional[Dict[str, Any]]:
+    query = query.strip()
+    if not query or len(query) < 1:
+        return None
+
+    query_lower = query.lower()
+
+    from services.symbols_service import find_symbol_by_name_or_alias
+    db_results = await find_symbol_by_name_or_alias(query, limit=5)
+
+    if db_results and db_results[0].get("score", 0) >= 80:
+        return {
+            "symbol": db_results[0]["symbol"],
+            "market": db_results[0]["market"],
+            "name_ar": db_results[0]["name_ar"],
+            "name_en": db_results[0]["name_en"],
+            "sector": db_results[0].get("sector"),
+            "source": "db",
+            "alternatives": db_results[1:5],
+        }
+
+    for key, symbol in CRYPTO_SYMBOL_MAP.items():
+        if key == query_lower or _normalize(key) == _normalize(query):
+            return {
+                "symbol": symbol,
+                "market": "CRYPTO",
+                "name_ar": query,
+                "name_en": query,
+                "source": "crypto_map",
+            }
+
+    upper = query.upper().strip()
+    if upper.endswith(".SR"):
+        return {
+            "symbol": upper,
+            "market": "SAUDI",
+            "name_ar": query,
+            "name_en": query,
+            "source": "pattern",
+        }
+    if upper.endswith("USDT"):
+        return {
+            "symbol": upper,
+            "market": "CRYPTO",
+            "name_ar": query,
+            "name_en": query,
+            "source": "pattern",
+        }
+
+    digits_only = upper.replace(".SR", "").replace(".", "")
+    if digits_only.isdigit() and len(digits_only) == 4:
+        return {
+            "symbol": f"{digits_only}.SR",
+            "market": "SAUDI",
+            "name_ar": query,
+            "name_en": query,
+            "source": "pattern",
+        }
+
+    clean = upper.replace(".SR", "")
+    if clean.isalpha() and clean.isascii() and 1 <= len(clean) <= 6:
+        return {
+            "symbol": clean,
+            "market": "US",
+            "name_ar": query,
+            "name_en": query,
+            "source": "pattern",
+        }
+
+    if db_results:
+        return {
+            "symbol": db_results[0]["symbol"],
+            "market": db_results[0]["market"],
+            "name_ar": db_results[0]["name_ar"],
+            "name_en": db_results[0]["name_en"],
+            "sector": db_results[0].get("sector"),
+            "source": "db_fuzzy",
+            "alternatives": db_results[1:5],
+        }
+
+    return None
+
+
 MARKET_EMOJI = {
     "SAUDI": "📈",
     "US": "🇺🇸",
@@ -381,9 +479,14 @@ def format_search_results(results: List[Dict]) -> str:
     for i, r in enumerate(results, 1):
         emoji = MARKET_EMOJI.get(r["market"], "📊")
         market_name = MARKET_ARABIC.get(r["market"], r["market"])
+        name = r.get("name_ar") or r.get("name_en") or r["symbol"]
+        sector = r.get("sector", "")
+        sector_line = f"🏢 القطاع: {sector}\n" if sector else ""
         lines.append(
-            f"{i}. {r['name_ar']}\n"
-            f"   {emoji} {market_name} | {r['symbol']}\n"
+            f"{i}. 🏷 {name}\n"
+            f"   🔢 {r['symbol']}\n"
+            f"   {emoji} {market_name}\n"
+            f"{sector_line}"
         )
     return "\n".join(lines)
 
@@ -392,7 +495,9 @@ def build_search_keyboard(results: List[Dict]) -> 'InlineKeyboardMarkup':
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     for r in results:
-        label = f"{r['name_ar'][:20]} ({r['symbol']})"
+        name = r.get("name_ar") or r.get("name_en") or r["symbol"]
+        short_sym = r["symbol"].replace(".SR", "").replace("USDT", "")
+        label = f"{name[:20]} | {short_sym}"
         builder.button(text=label, callback_data=f"smart_result:{r['id']}")
     builder.button(text="↩️ رجوع", callback_data="main_menu")
     builder.adjust(2)

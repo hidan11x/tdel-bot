@@ -17,7 +17,7 @@ def _ensure_chart_dir():
     os.makedirs(CHART_DIR, exist_ok=True)
 
 
-def generate_chart(symbol: str, market: str, timeframe: str = "1d") -> Optional[str]:
+def generate_chart(symbol: str, market: str, timeframe: str = "1d", name: str = None) -> Optional[str]:
     try:
         _ensure_chart_dir()
         ohlcv = get_ohlcv(symbol, market, timeframe, outputsize=200)
@@ -41,9 +41,9 @@ def generate_chart(symbol: str, market: str, timeframe: str = "1d") -> Optional[
         ema50 = calculate_ema_series(closes, 50)
         ema200 = calculate_ema_series(closes, 200)
 
-        df["EMA20"] = ema20
-        df["EMA50"] = ema50
-        df["EMA200"] = ema200
+        df["EMA20"] = [v if v is not None else float("nan") for v in ema20]
+        df["EMA50"] = [v if v is not None else float("nan") for v in ema50]
+        df["EMA200"] = [v if v is not None else float("nan") for v in ema200]
 
         support, resistance = find_support_resistance(closes, lookback=20)
 
@@ -115,11 +115,22 @@ def generate_chart(symbol: str, market: str, timeframe: str = "1d") -> Optional[
                 color="#4fc3f7", fontsize=8, va="bottom",
             )
 
-        axes[0].set_title(f"{symbol} - {timeframe}", color="#ffffff", fontsize=12)
+        market_name = {"SAUDI": "السعودي", "US": "الأمريكي", "CRYPTO": "الرقمية"}.get(market.upper(), market)
+        tf_name = {"1d": "يومي", "1h": "ساعي", "15m": "15 دقيقة", "4h": "4 ساعات", "1w": "أسبوعي"}.get(timeframe, timeframe)
+        display_name = name if name else symbol
+        title_text = f"{display_name} — {symbol}"
+        subtitle_text = f"{market_name} | {tf_name}"
+
+        axes[0].set_title(title_text, color="#ffffff", fontsize=12)
+        axes[0].text(0.5, -0.12, subtitle_text, transform=axes[0].transAxes,
+                     color="#999999", fontsize=9, ha="center", va="top")
+
         fig.savefig(filepath, bbox_inches="tight", dpi=100)
         import matplotlib.pyplot as plt
         plt.close(fig)
 
         return filepath
-    except Exception:
+    except Exception as e:
+        from loguru import logger
+        logger.exception("Chart generation failed for {} {}: {}", symbol, market, e)
         return None

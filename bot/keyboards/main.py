@@ -227,8 +227,10 @@ def sectors_menu(sectors: list, market: str) -> InlineKeyboardMarkup:
 def symbol_list_menu(symbols: list, page: int, total_pages: int, market: str, sector: str = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for s in symbols:
-        name = s.symbol if len(s.symbol) > 12 else f"{s.symbol} - {s.name_ar[:15]}"
-        builder.button(text=name, callback_data=f"symbol:{s.id}")
+        name = s.name_ar or s.name_en or s.symbol
+        short_sym = s.symbol.replace(".SR", "").replace("USDT", "")
+        label = f"{name[:18]} | {short_sym}"
+        builder.button(text=label, callback_data=f"symbol:{s.id}")
     nav_row = []
     if page > 1:
         nav_row.append(("⬅️ السابق", f"sector:{market}:{sector}:{page - 1}" if sector else f"sym_list:{market}:{page - 1}"))

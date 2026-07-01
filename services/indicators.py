@@ -68,7 +68,7 @@ def calculate_all(df: pd.DataFrame) -> Dict[str, any]:
         result["avg_volume"] = None
         result["relative_volume"] = None
 
-    close_list = closes.tolist() if isinstance(closes, pd.Series) else closes
+    close_list = _ensure_list(closes)
     result["support"], result["resistance"] = find_support_resistance(close_list, lookback=20)
     result["trend"] = detect_trend(close_list)
     return result
@@ -132,7 +132,8 @@ def calculate_bollinger(closes: List[float]) -> Dict[str, Optional[float]]:
     }
 
 
-def detect_trend(closes: List[float]) -> str:
+def detect_trend(closes) -> str:
+    closes = _ensure_list(closes)
     if len(closes) < 201:
         if len(closes) < 51:
             return "sideways"
@@ -163,10 +164,23 @@ def detect_trend(closes: List[float]) -> str:
     return "sideways"
 
 
-def find_support_resistance(closes: List[float], lookback: int = 20) -> Tuple[Optional[float], Optional[float]]:
+def _ensure_list(values) -> list:
+    if isinstance(values, list):
+        return values
+    if hasattr(values, "tolist"):
+        return values.tolist()
+    if hasattr(values, "iloc"):
+        if hasattr(values, "columns"):
+            return values.iloc[:, 0].tolist()
+        return values.tolist()
+    return list(values)
+
+
+def find_support_resistance(closes, lookback: int = 20) -> Tuple[Optional[float], Optional[float]]:
+    closes = _ensure_list(closes)
+    if not closes:
+        return None, None
     if len(closes) < lookback * 2:
-        if not closes:
-            return None, None
         return min(closes), max(closes)
 
     recent = closes[-lookback:]

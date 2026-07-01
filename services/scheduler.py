@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import List, Dict, Any, Optional
 
 from loguru import logger
@@ -8,9 +8,12 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
 from database import get_session
-from models import User
+from models import User, Watchlist
 from services.scanner import scan_symbol
 from services.subscriptions import check_subscription_expiry
+from services.signal_engine import build_signal, format_signal_message
+from services.alerts_engine import check_alerts, format_alert_message, get_user_telegram_id
+from services.symbols_service import get_symbol_info
 from utils.formatter import format_technical_report
 from config import settings
 
@@ -26,6 +29,9 @@ MARKET_NAMES = {
     "US": "الأمريكي",
     "CRYPTO": "الكريبتو",
 }
+
+_WATCHLIST_DEDUP_WINDOW = timedelta(hours=4)
+_WATCHLIST_DEDUP_MEMORY: Dict[str, datetime] = {}
 
 
 class ReportScheduler:
@@ -59,6 +65,20 @@ class ReportScheduler:
             self.check_expired_subscriptions,
             CronTrigger(hour=0, minute=0),
             id="sub_check",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.check_and_send_alerts,
+            "interval",
+            minutes=5,
+            id="alerts_check",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.monitor_watchlists,
+            "interval",
+            minutes=15,
+            id="watchlist_monitor",
             replace_existing=True,
         )
         self.scheduler.start()
@@ -125,6 +145,138 @@ class ReportScheduler:
                 )
             except Exception:
                 continue
+
+    async def check_and_send_alerts(self):
+        try:
+            triggered = await check_alerts()
+            if not triggered:
+                return
+
+            for alert_payload in triggered:
+                try:
+                    telegram_id = await get_user_telegram_id(alert_payload["user_id"])
+                    if not telegram_id:
+                        continue
+
+                    info = await get_symbol_info(
+                        alert_payload["symbol"],
+                        alert_payload["market"],
+                    )
+                    name_ar = info["name_ar"] if info else alert_payload["symbol"]
+                    sector = info["sector"] if info else None
+
+                    message = format_alert_message(alert_payload, name_ar, sector)
+                    await self.bot.send_message(telegram_id, message[:4000])
+                    logger.info(
+                        "Alert sent to user_id={} symbol={}",
+                        alert_payload["user_id"],
+                        alert_payload["symbol"],
+                    )
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    logger.exception("Failed to send alert to user_id={}", alert_payload.get("user_id"))
+                    continue
+        except Exception:
+            logger.exception("check_and_send_alerts failed")
+
+    async def monitor_watchlists(self):
+        try:
+            async with get_session() as session:
+                stmt = select(Watchlist).where(
+                    Watchlist.user_id.in_(
+                        select(User.id).where(User.is_active == True, User.is_banned == False)
+                    )
+                )
+                result = await session.execute(stmt)
+                items = result.scalars().all()
+
+            if not items:
+                return
+
+            unique_symbols: Dict[str, Dict] = {}
+            for item in items:
+                key = f"{item.symbol}:{item.market}"
+                if key not in unique_symbols:
+                    unique_symbols[key] = {"symbol": item.symbol, "market": item.market}
+
+            scans: Dict[str, Optional[Dict]] = {}
+            for key, info in unique_symbols.items():
+                try:
+                    result = await scan_symbol(info["symbol"], info["market"], "1d")
+                    scans[key] = result
+                except Exception:
+                    scans[key] = None
+
+            now_dt = datetime.now(timezone.utc)
+            sent_count = 0
+
+            for item in items:
+                key = f"{item.symbol}:{item.market}"
+                result = scans.get(key)
+                if not result:
+                    continue
+
+                change_pct = result.get("change_percent", 0)
+                trend = result.get("trend", "sideways")
+                score = result.get("score")
+                score_val = float(score.overall) if score else 0
+
+                should_notify = False
+                reason = ""
+
+                if abs(change_pct) >= 3.0:
+                    should_notify = True
+                    sign = "+" if change_pct >= 0 else ""
+                    reason = f"تغير ملحوظ في السعر: {sign}{change_pct:.2f}%"
+
+                if trend in ("uptrend", "downtrend") and score_val >= 65:
+                    should_notify = True
+                    trend_ar = "صاعد" if trend == "uptrend" else "هابط"
+                    reason = f"الاتجاه {trend_ar} مع قراءة فنية قوية ({score_val:.0f}/100)"
+
+                if not should_notify:
+                    continue
+
+                dedup_key = f"wl:{item.user_id}:{item.symbol}:{item.market}"
+                last_sent = _WATCHLIST_DEDUP_MEMORY.get(dedup_key)
+                if last_sent and (now_dt - last_sent) < _WATCHLIST_DEDUP_WINDOW:
+                    continue
+
+                try:
+                    telegram_id = await get_user_telegram_id(item.user_id)
+                    if not telegram_id:
+                        continue
+
+                    info = await get_symbol_info(item.symbol, item.market)
+                    name_ar = info["name_ar"] if info else item.symbol
+                    sector = info["sector"] if info else None
+                    market_label = MARKET_NAMES.get(item.market, item.market)
+
+                    signal = build_signal(result)
+                    signal_msg = format_signal_message(signal)
+
+                    message = (
+                        f"⭐ تنبيه من قائمة المتابعة\n\n"
+                        f"🏷 {name_ar}\n"
+                        f"🔢 {item.symbol}\n"
+                        f"🌍 السوق {market_label}\n"
+                        f"📋 {reason}\n\n"
+                        f"{'─' * 22}\n\n"
+                        f"{signal_msg}"
+                    )
+
+                    await self.bot.send_message(telegram_id, message[:4000])
+                    _WATCHLIST_DEDUP_MEMORY[dedup_key] = now_dt
+                    sent_count += 1
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    logger.exception("Failed to send watchlist alert user_id={}", item.user_id)
+                    continue
+
+            if sent_count:
+                logger.info("Watchlist monitor sent {} notifications", sent_count)
+        except Exception:
+            logger.exception("monitor_watchlists failed")
 
     async def _get_active_users(self):
         async with get_session() as session:

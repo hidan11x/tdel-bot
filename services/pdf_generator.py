@@ -5,6 +5,13 @@ from fpdf import FPDF
 
 from utils.formatter import format_price, format_change
 
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    HAS_ARABIC = True
+except ImportError:
+    HAS_ARABIC = False
+
 PDF_DIR = os.path.join("data", "pdfs")
 
 
@@ -14,6 +21,16 @@ def _ensure_pdf_dir():
 
 ARIAL = r"C:\Windows\Fonts\arial.ttf"
 ARIAL_BD = r"C:\Windows\Fonts\arialbd.ttf"
+
+
+def _ar(text: str) -> str:
+    if not text or not HAS_ARABIC:
+        return text or ""
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        return get_display(reshaped)
+    except Exception:
+        return text
 
 
 def generate_pdf_report(scan_result: Dict[str, Any]) -> Optional[str]:
@@ -28,8 +45,17 @@ def generate_pdf_report(scan_result: Dict[str, Any]) -> Optional[str]:
         pdf.add_page()
 
         sym = scan_result.get("symbol", "N/A")
+        name_ar = scan_result.get("name_ar", sym)
+        name_en = scan_result.get("name_en", sym)
+
+        display_name = name_ar if name_ar and name_ar != sym else name_en
+        if display_name == sym:
+            display_name = sym
+
         pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, text="Technical Report - " + sym, new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.cell(0, 10, text=display_name, new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.set_font("Arial", "", 11)
+        pdf.cell(0, 7, text=sym, new_x="LMARGIN", new_y="NEXT", align="C")
         pdf.ln(5)
 
         market_display = {"SAUDI": "Saudi", "US": "US", "CRYPTO": "Crypto"}
@@ -77,8 +103,10 @@ def generate_pdf_report(scan_result: Dict[str, Any]) -> Optional[str]:
             pdf.cell(0, 10, text="Technical Score", new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Arial", "", 11)
             pdf.cell(0, 7, text="Overall: " + f"{score.overall:.0f}/100", new_x="LMARGIN", new_y="NEXT")
-            pdf.cell(0, 7, text="Rating: " + str(scan_result.get("rating", "N/A")), new_x="LMARGIN", new_y="NEXT")
-            pdf.cell(0, 7, text="Risk: " + str(scan_result.get("risk_level", "N/A")), new_x="LMARGIN", new_y="NEXT")
+            rating = scan_result.get("rating", "N/A")
+            pdf.cell(0, 7, text="Rating: " + rating, new_x="LMARGIN", new_y="NEXT")
+            risk = scan_result.get("risk_level", "N/A")
+            pdf.cell(0, 7, text="Risk: " + risk, new_x="LMARGIN", new_y="NEXT")
 
         pdf.ln(5)
 
@@ -100,5 +128,7 @@ def generate_pdf_report(scan_result: Dict[str, Any]) -> Optional[str]:
         filepath = os.path.join(PDF_DIR, filename)
         pdf.output(filepath)
         return filepath
-    except Exception:
+    except Exception as e:
+        from loguru import logger
+        logger.exception("PDF generation failed: {}", e)
         return None
