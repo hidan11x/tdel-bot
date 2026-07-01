@@ -123,7 +123,15 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await cq.answer()
     elif data == "admin_codes_create":
         await state.set_state(AdminStates.add_code_plan)
-        await cq.message.edit_text("اختر الخطة للكود:", reply_markup=back_button("admin_codes"))
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🥉 Basic", callback_data="admin_code_plan:basic")
+        builder.button(text="🥈 Pro", callback_data="admin_code_plan:pro")
+        builder.button(text="🥇 VIP", callback_data="admin_code_plan:vip")
+        builder.button(text="💎 Lifetime", callback_data="admin_code_plan:lifetime")
+        builder.button(text="↩️ رجوع", callback_data="admin_codes")
+        builder.adjust(2, 2, 1)
+        await cq.message.edit_text("اختر الخطة للكود:", reply_markup=builder.as_markup())
         await cq.answer()
     elif data.startswith("admin_code_plan:"):
         plan = data.split(":")[1]

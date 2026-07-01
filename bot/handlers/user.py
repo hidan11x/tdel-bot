@@ -356,13 +356,13 @@ async def cb_help(callback: CallbackQuery):
 async def cb_support(callback: CallbackQuery):
     await callback.answer()
     from bot.keyboards.main import support_menu
-    text = "📧 تواصل مع الدعم الفني:\nبوت: @support_bot\nبريد: support@example.com"
+    text = "📧 تواصل مع الدعم الفني:\n👤 تيليقرام: @hidanx11"
     await callback.message.edit_text(text, reply_markup=support_menu())
 
 
 @router.callback_query(F.data == "support_contact")
 async def cb_support_contact(callback: CallbackQuery):
-    await callback.answer("يرجى التواصل عبر البريد الإلكتروني: support@example.com", show_alert=True)
+    await callback.answer("تواصل معي على تيليقرام: @hidanx11", show_alert=True)
 
 
 @router.callback_query(F.data == "support_faq")
@@ -382,7 +382,7 @@ async def cb_support_faq(callback: CallbackQuery):
 
 @router.callback_query(F.data == "support_group")
 async def cb_support_group(callback: CallbackQuery):
-    await callback.answer("رابط المجموعة: https://t.me/group", show_alert=True)
+    await callback.answer("تواصل معي مباشرة: @hidanx11", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("profile_info"))
