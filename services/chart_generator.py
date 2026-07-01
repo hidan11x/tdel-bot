@@ -6,6 +6,7 @@ import mplfinance as mpf
 import matplotlib
 matplotlib.use("Agg")
 
+from loguru import logger
 from services.market_data import get_ohlcv
 from services.indicators import calculate_ema_series, find_support_resistance
 
