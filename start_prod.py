@@ -67,9 +67,10 @@ async def startup():
     dp = Dispatcher()
 
     for r in [
+        admin_router,
         user_router, scan_router, watchlist_router, alerts_router,
-        charts_router, subscriptions_router, top_router, admin_router,
-        comparison_router, tickets_router, heatmap_router,
+        charts_router, subscriptions_router, top_router,
+        comparison_router, tickets_router, heatmap_router, features_router,
     ]:
         dp.include_router(r)
 

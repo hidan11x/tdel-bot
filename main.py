@@ -116,6 +116,7 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
+    dp.include_router(admin_router)
     dp.include_router(user_router)
     dp.include_router(scan_router)
     dp.include_router(watchlist_router)
@@ -123,7 +124,6 @@ async def main() -> None:
     dp.include_router(charts_router)
     dp.include_router(subscriptions_router)
     dp.include_router(top_router)
-    dp.include_router(admin_router)
     dp.include_router(comparison_router)
     dp.include_router(tickets_router)
     dp.include_router(heatmap_router)
