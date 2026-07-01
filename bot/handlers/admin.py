@@ -147,6 +147,19 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_indicators(cq)
     elif data == "admin_backup":
         await _admin_backup(cq)
+    elif data == "admin_update_notify":
+        await state.set_state(AdminStates.broadcast_text)
+        await cq.message.edit_text(
+            "📢 إشعار تحديث البوت\n\n"
+            "أرسل نص التحديث ليصل لكل المستخدمين:\n\n"
+            "مثال:\n"
+            "✅ تم تحديث البوت!\n"
+            "الميزات الجديدة:\n- ...\n- ...",
+            reply_markup=back_button("admin_panel"),
+        )
+        await cq.answer()
+    elif data == "admin_monthly_stats":
+        await _admin_monthly_stats(cq)
     elif data == "admin_coupons":
         await _admin_coupons_menu(cq)
     elif data.startswith("admin_coupon_disable:"):
@@ -710,6 +723,72 @@ async def _admin_backup(cq: CallbackQuery):
 
     except Exception as e:
         await cq.answer(f"❌ خطأ: {str(e)[:100]}", show_alert=True)
+
+
+async def _admin_monthly_stats(cq: CallbackQuery):
+    try:
+        from datetime import timedelta
+        now_utc = datetime.now(timezone.utc)
+        month_ago = now_utc - timedelta(days=30)
+
+        async with get_session() as session:
+            total_users = (await session.execute(select(func.count(User.id)))).scalar() or 0
+
+            new_users = (await session.execute(
+                select(func.count(User.id)).where(User.created_at >= month_ago)
+            )).scalar() or 0
+
+            active_subs = (await session.execute(
+                select(func.count(User.id)).where(
+                    User.plan != "free",
+                    User.subscription_end > now_utc,
+                )
+            )).scalar() or 0
+
+            total_scans = (await session.execute(
+                select(func.count(ScanLog.id)).where(ScanLog.created_at >= month_ago)
+            )).scalar() or 0
+
+            top_symbols = (await session.execute(
+                select(ScanLog.symbol, func.count(ScanLog.id).label("cnt"))
+                .where(ScanLog.created_at >= month_ago)
+                .group_by(ScanLog.symbol)
+                .order_by(func.count(ScanLog.id).desc())
+                .limit(5)
+            )).all()
+
+            plan_counts = {}
+            for p in ["free", "basic", "pro", "vip", "lifetime"]:
+                cnt = (await session.execute(
+                    select(func.count(User.id)).where(User.plan == p)
+                )).scalar() or 0
+                plan_counts[p] = cnt
+
+        plan_names = {"free": "مجاني", "basic": "أساسي", "pro": "احترافي", "vip": "VIP", "lifetime": "مدى الحياة"}
+
+        text = (
+            "📊 إحصائيات آخر 30 يوم\n\n"
+            f"👥 إجمالي المستخدمين: {total_users}\n"
+            f"🆕 مستخدمين جدد: {new_users}\n"
+            f"✅ اشتراكات نشطة: {active_subs}\n"
+            f"📊 إجمالي الفحوصات: {total_scans}\n\n"
+            "📋 توزيع الباقات:\n"
+        )
+        for p, cnt in plan_counts.items():
+            text += f"  {plan_names.get(p, p)}: {cnt}\n"
+
+        if top_symbols:
+            text += "\n🏆 أكثر الرموز فحصاً:\n"
+            for sym, cnt in top_symbols:
+                text += f"  {sym}: {cnt} فحص\n"
+
+        text += "\n💰 للمتابعة: @hidanx11"
+
+        await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+        await cq.answer()
+
+    except Exception as e:
+        await cq.answer(f"خطأ: {str(e)[:100]}", show_alert=True)
 
 
 async def _admin_coupons_menu(cq: CallbackQuery):

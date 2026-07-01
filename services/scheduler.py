@@ -71,6 +71,12 @@ class ReportScheduler:
             replace_existing=True,
         )
         self.scheduler.add_job(
+            self.check_subscription_expiry_warning,
+            CronTrigger(hour=10, minute=0),
+            id="sub_expiry_warning",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
             self.check_and_send_alerts,
             "interval",
             minutes=5,
@@ -164,10 +170,86 @@ class ReportScheduler:
             try:
                 await self.bot.send_message(
                     exp["telegram_id"],
-                    "⚠️ انتهت صلاحية اشتراكك. تم تحويلك إلى الباقة المجانية.",
+                    "⏰ انتهى اشتراكك في البوت.\n\n"
+                    "لتجديد الاشتراك تواصل مع:\n"
+                    "👤 @hidanx11\n\n"
+                    "أو أدخل كود تفعيل جديد من القائمة.",
                 )
             except Exception:
                 continue
+
+    async def check_subscription_expiry_warning(self):
+        try:
+            from datetime import timedelta
+            now_utc = datetime.now(timezone.utc)
+
+            async with get_session() as session:
+                stmt = select(User).where(
+                    User.is_active == True,
+                    User.is_banned == False,
+                    User.plan != "free",
+                )
+                result = await session.execute(stmt)
+                users = result.scalars().all()
+
+            for user in users:
+                if user.subscription_end is None:
+                    continue
+                sub_end = user.subscription_end
+                if sub_end.tzinfo is None:
+                    sub_end = sub_end.replace(tzinfo=timezone.utc)
+
+                days_left = (sub_end - now_utc).days
+
+                if days_left == 2:
+                    try:
+                        await self.bot.send_message(
+                            user.telegram_id,
+                            f"⚠️ اشتراكك ينتهي بعد يومين!\n\n"
+                            f"الخطة: {user.plan}\n"
+                            f"تاريخ الانتهاء: {sub_end.strftime('%Y-%m-%d')}\n\n"
+                            f"لتجديد الاشتراك تواصل مع:\n👤 @hidanx11",
+                        )
+                    except Exception:
+                        continue
+                elif days_left == 1:
+                    try:
+                        await self.bot.send_message(
+                            user.telegram_id,
+                            f"🔴 اشتراكك ينتهي غداً!\n\n"
+                            f"الخطة: {user.plan}\n\n"
+                            f"لتجديد الاشتراك تواصل مع:\n👤 @hidanx11",
+                        )
+                    except Exception:
+                        continue
+
+        except Exception:
+            logger.exception("check_subscription_expiry_warning failed")
+
+    async def send_update_notification(self, update_text: str):
+        try:
+            async with get_session() as session:
+                stmt = select(User).where(
+                    User.is_active == True,
+                    User.is_banned == False,
+                )
+                result = await session.execute(stmt)
+                users = result.scalars().all()
+
+            sent = 0
+            for user in users:
+                try:
+                    await self.bot.send_message(user.telegram_id, update_text[:4000])
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    continue
+
+            logger.info("Update notification sent to {} users", sent)
+            return sent
+        except Exception:
+            logger.exception("send_update_notification failed")
+            return 0
 
     async def check_and_send_alerts(self):
         try:

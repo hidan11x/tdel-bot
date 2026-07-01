@@ -24,6 +24,10 @@ class SmartSignal:
     warnings: list[str]
     summary: str
     generated_at: str
+    adx: Optional[float]
+    stoch_k: Optional[float]
+    stoch_d: Optional[float]
+    rsi: Optional[float]
 
 
 def _to_score_value(score_obj: Any) -> float:
@@ -200,6 +204,10 @@ def build_signal(scan_result: dict) -> SmartSignal:
         warnings=warnings,
         summary=str(scan_result.get("summary", "")),
         generated_at=generated_at,
+        adx=indicators.get("adx"),
+        stoch_k=indicators.get("stoch_k"),
+        stoch_d=indicators.get("stoch_d"),
+        rsi=indicators.get("rsi"),
     )
 
 
@@ -261,6 +269,19 @@ def format_signal_message(signal: SmartSignal) -> str:
 
     sector_line = f"🏢 القطاع: {signal.sector}\n" if signal.sector else ""
 
+    extra_indicators = ""
+    if signal.rsi is not None:
+        extra_indicators += f"📊 RSI: {signal.rsi:.1f}\n"
+    if signal.adx is not None:
+        adx_label = "قوي" if signal.adx > 25 else ("متوسط" if signal.adx > 20 else "ضعيف")
+        extra_indicators += f"📐 ADX: {signal.adx:.1f} ({adx_label})\n"
+    if signal.stoch_k is not None:
+        stoch_label = "تشبع شرائي" if signal.stoch_k > 80 else ("تشبع بيعي" if signal.stoch_k < 20 else "محايد")
+        extra_indicators += f"🔄 Stoch: {signal.stoch_k:.1f} ({stoch_label})\n"
+
+    if extra_indicators:
+        extra_indicators = "\n" + extra_indicators
+
     return (
         f"📊 قراءة فنية تعليمية\n\n"
         f"🏷 الأصل: {name}\n"
@@ -273,8 +294,9 @@ def format_signal_message(signal: SmartSignal) -> str:
         f"🧭 الاتجاه: {_trend_label(signal.trend)}\n"
         f"⭐ التقييم: {signal.rating} ({signal.score:.0f}/100)\n"
         f"🎯 الثقة: {signal.confidence}/100\n"
-        f"⚠️ المخاطرة: {signal.risk_level}\n\n"
-        f"🟢 الدعم: {_format_price(signal.support)}\n"
+        f"⚠️ المخاطرة: {signal.risk_level}\n"
+        f"{extra_indicators}"
+        f"\n🟢 الدعم: {_format_price(signal.support)}\n"
         f"🔴 المقاومة: {_format_price(signal.resistance)}\n\n"
         f"أسباب الاشارة:\n"
         f"{reason_lines}\n\n"

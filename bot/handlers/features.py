@@ -422,3 +422,107 @@ async def cb_news_detail(callback: CallbackQuery):
 
     text = format_news_items(items, label)
     await callback.message.edit_text(text[:4000], reply_markup=back_button("news_menu"))
+
+
+@router.callback_query(F.data == "sector_performance")
+async def cb_sector_performance(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("📊 جاري تحليل أداء القطاعات...")
+
+    try:
+        from services.scanner import scan_symbol, TOP_SYMBOLS
+        from services.symbols_service import get_symbol_info
+        import asyncio
+
+        sector_data = {}
+
+        for market in ["SAUDI"]:
+            symbols = TOP_SYMBOLS.get(market, [])
+            for sym in symbols:
+                try:
+                    r = await scan_symbol(sym, market, "1d")
+                    if r:
+                        info = await get_symbol_info(sym, market)
+                        sector = info.get("sector") if info else None
+                        if sector:
+                            if sector not in sector_data:
+                                sector_data[sector] = {"up": 0, "down": 0, "total": 0, "changes": []}
+                            sector_data[sector]["total"] += 1
+                            change = r.get("change_percent", 0)
+                            sector_data[sector]["changes"].append(change)
+                            if change > 0:
+                                sector_data[sector]["up"] += 1
+                            else:
+                                sector_data[sector]["down"] += 1
+                except Exception:
+                    continue
+
+        if not sector_data:
+            await callback.message.edit_text("❌ تعذر تحليل القطاعات.", reply_markup=back_button("main_menu"))
+            return
+
+        lines = ["📊 أداء القطاعات — السوق السعودي\n"]
+
+        sorted_sectors = sorted(sector_data.items(), key=lambda x: sum(x[1]["changes"]) / len(x[1]["changes"]) if x[1]["changes"] else 0, reverse=True)
+
+        for sector, data in sorted_sectors:
+            avg_change = sum(data["changes"]) / len(data["changes"]) if data["changes"] else 0
+            up_pct = (data["up"] / data["total"] * 100) if data["total"] > 0 else 0
+            emoji = "🟢" if avg_change > 0.5 else ("🔴" if avg_change < -0.5 else "🟡")
+            lines.append(f"{emoji} {sector}: {avg_change:+.2f}% ({data['up']}▲ {data['down']}▼)")
+
+        lines.append("\n⚠️ تحليل تعليمي وليس توصية مالية.")
+        await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=back_button("main_menu"))
+
+    except Exception:
+        await callback.message.edit_text("❌ تعذر تحليل القطاعات.", reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data.startswith("rate_scan:"))
+async def cb_rate_scan(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    rating = parts[1]
+    symbol = parts[2] if len(parts) > 2 else ""
+
+    if rating == "up":
+        await callback.answer("👍 شكراً للتقييم!", show_alert=False)
+    else:
+        await callback.answer("👎 شكراً للملاحظة!", show_alert=False)
+
+
+@router.callback_query(F.data == "my_news_alerts")
+async def cb_my_news_alerts(callback: CallbackQuery):
+    await callback.answer()
+    from database import get_session
+    from models import Watchlist
+
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("المستخدم غير موجود.", reply_markup=back_button("main_menu"))
+        return
+
+    async with get_session() as session:
+        stmt = select(Watchlist).where(Watchlist.user_id == user.id)
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+
+    if not items:
+        await callback.message.edit_text(
+            "📰 لا توجد رموز في قائمة متابعتك.\n\nأضف رموز لقائمة المتابعة لتصلك أخبارها.",
+            reply_markup=back_button("main_menu"),
+        )
+        return
+
+    from services.news import get_recent_news, format_news_items
+    all_news = []
+    for item in items:
+        news = await get_recent_news(limit=3)
+        all_news.extend(news)
+
+    if not all_news:
+        await callback.message.edit_text("📰 لا توجد أخبار متاحة حالياً.", reply_markup=back_button("main_menu"))
+        return
+
+    text = format_news_items(all_news[:8], "لرموزك المتابعة")
+    await callback.message.edit_text(text[:4000], reply_markup=back_button("main_menu"))

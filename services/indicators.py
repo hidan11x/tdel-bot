@@ -71,6 +71,36 @@ def calculate_all(df: pd.DataFrame) -> Dict[str, any]:
     close_list = _ensure_list(closes)
     result["support"], result["resistance"] = find_support_resistance(close_list, lookback=20)
     result["trend"] = detect_trend(close_list)
+
+    if not atr_df.empty and all(c in atr_df.columns for c in ["high", "low", "close"]):
+        try:
+            adx_val = ta.adx(atr_df["high"], atr_df["low"], atr_df["close"], length=14)
+            if adx_val is not None and not adx_val.isna().all():
+                adx_cols = [c for c in adx_val.columns if "ADX" in c.upper()]
+                if adx_cols:
+                    result["adx"] = float(adx_val[adx_cols[0]].iloc[-1])
+                else:
+                    result["adx"] = float(adx_val.iloc[-1, 0])
+            else:
+                result["adx"] = None
+        except Exception:
+            result["adx"] = None
+    else:
+        result["adx"] = None
+
+    try:
+        stoch = ta.stoch(closes, k=14, d=3)
+        if stoch is not None and not stoch.isna().all():
+            cols = [c for c in stoch.columns]
+            result["stoch_k"] = float(stoch[cols[0]].iloc[-1]) if len(cols) > 0 else None
+            result["stoch_d"] = float(stoch[cols[1]].iloc[-1]) if len(cols) > 1 else None
+        else:
+            result["stoch_k"] = None
+            result["stoch_d"] = None
+    except Exception:
+        result["stoch_k"] = None
+        result["stoch_d"] = None
+
     return result
 
 

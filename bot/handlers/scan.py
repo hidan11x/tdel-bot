@@ -88,7 +88,14 @@ async def _perform_scan_and_report(
 
     market_key = MARKET_KEY_MAP.get(market, market.lower())
     kb = symbol_actions(symbol, market_key)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    rating_kb = InlineKeyboardBuilder()
+    rating_kb.button(text="👍 مفيد", callback_data=f"rate_scan:up:{symbol}")
+    rating_kb.button(text="👎 غير مفيد", callback_data=f"rate_scan:down:{symbol}")
+
     await callback.message.edit_text(report, reply_markup=kb)
+    await callback.message.answer("هل كان هذا التحليل مفيد؟", reply_markup=rating_kb.as_markup())
 
     try:
         from services.chart_generator import generate_chart
