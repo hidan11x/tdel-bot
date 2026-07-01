@@ -16,6 +16,7 @@ from services.alerts_engine import check_alerts, format_alert_message, get_user_
 from services.symbols_service import get_symbol_info
 from services.price_tracker import check_price_trackers
 from services.market_overview import get_daily_market_summary
+from services.news import send_news_notifications, get_recent_news, format_news_items
 from utils.formatter import format_technical_report
 from config import settings
 
@@ -94,6 +95,13 @@ class ReportScheduler:
             self.send_daily_market_summary,
             CronTrigger(hour=7, minute=0),
             id="daily_summary",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.send_news_notifications_job,
+            "interval",
+            hours=1,
+            id="news_notifications",
             replace_existing=True,
         )
         self.scheduler.start()
@@ -316,6 +324,14 @@ class ReportScheduler:
             logger.info("Daily market summary sent to {} users", len(users))
         except Exception:
             logger.exception("send_daily_market_summary failed")
+
+    async def send_news_notifications_job(self):
+        try:
+            count = await send_news_notifications(self.bot)
+            if count:
+                logger.info("News notifications: {} sent", count)
+        except Exception:
+            logger.exception("send_news_notifications_job failed")
 
     async def _get_active_users(self):
         async with get_session() as session:

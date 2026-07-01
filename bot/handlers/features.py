@@ -10,6 +10,7 @@ from services.price_tracker import (
     create_price_tracker, get_user_price_trackers, deactivate_price_tracker,
 )
 from services.market_overview import get_market_overview
+from services.news import get_recent_news, format_news_items
 from services.social import (
     create_share_link, increment_share_view, process_referral,
     export_scan_history_csv, get_user_scan_history,
@@ -231,3 +232,38 @@ async def cb_language_toggle(callback: CallbackQuery):
         f"🌐 تم تبديل اللغة إلى {lang_name}",
         reply_markup=back_button("main_menu"),
     )
+
+
+@router.callback_query(F.data == "news_menu")
+async def cb_news_menu(callback: CallbackQuery):
+    await callback.answer()
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🇸🇦 أخبار السعودية", callback_data="news:SAUDI")
+    builder.button(text="🇺🇸 أخبار أمريكا", callback_data="news:US")
+    builder.button(text="₿ أخبار الكريبتو", callback_data="news:CRYPTO")
+    builder.button(text="📰 كل الأخبار", callback_data="news:ALL")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(2, 2, 1)
+    await callback.message.edit_text("📰 اختر السوق للأخبار:", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("news:"))
+async def cb_news_detail(callback: CallbackQuery):
+    await callback.answer()
+    market = callback.data.split(":")[1]
+
+    await callback.message.edit_text("📰 جاري جلب الأخبار...")
+
+    if market == "ALL":
+        items = await get_recent_news(limit=10)
+        label = ""
+    else:
+        items = await get_recent_news(market=market, limit=8)
+        label = {"SAUDI": "السعودي", "US": "الأمريكي", "CRYPTO": "الرقمية"}.get(market, market)
+
+    if not items:
+        await callback.message.edit_text("📰 لا توجد أخبار متاحة حالياً.", reply_markup=back_button("news_menu"))
+        return
+
+    text = format_news_items(items, label)
+    await callback.message.edit_text(text[:4000], reply_markup=back_button("news_menu"))

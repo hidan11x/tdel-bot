@@ -349,3 +349,16 @@ class SharedAnalysis(Base):
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", backref="shared_analyses")
+
+
+class NewsItem(Base):
+    __tablename__ = "news_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String)
+    url: Mapped[str] = mapped_column(String, unique=True)
+    source: Mapped[str] = mapped_column(String, default="yahoo")
+    market: Mapped[str] = mapped_column(String, default="general")
+    published_at: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
+    sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)

@@ -13,6 +13,7 @@ MAIN_MENU_BUTTONS: list[tuple[str, str]] = [
     ("🇺🇸 السوق الأمريكي", "market:us"),
     ("₿ العملات الرقمية", "market:crypto"),
     ("📊 حالة السوق", "market_overview"),
+    ("📰 أخبار السوق", "news_menu"),
     ("📅 التقارير اليومية", "daily_reports"),
     ("📊 مقارنة", "compare"),
     ("🔔 تنبيهاتي", "my_alerts"),
