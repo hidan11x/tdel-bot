@@ -93,10 +93,10 @@ async def _perform_scan_and_report(
     try:
         chart_path = generate_chart(symbol, market, timeframe, name=result.get("name_ar"))
         if chart_path:
-            photo = FSInputFile(chart_path)
+            doc = FSInputFile(chart_path)
             name = result.get("name_ar") or symbol
-            caption_text = f"📉 {name} — {symbol} ({timeframe})"
-            await callback.message.answer_photo(photo, caption=caption_text)
+            caption_text = f"📉 {name} — {symbol} ({timeframe})\nافتح الملف في المتصفح لرؤية الشارت التفاعلي"
+            await callback.message.answer_document(doc, caption=caption_text)
     except Exception:
         pass
 

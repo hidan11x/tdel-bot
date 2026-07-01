@@ -628,8 +628,8 @@ async def cb_quick_scan_sym(callback: CallbackQuery):
         name = result.get("name_ar") or symbol
         chart_path = generate_chart(symbol, market, "1d", name=name)
         if chart_path:
-            photo = FSInputFile(chart_path)
-            await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
+            doc = FSInputFile(chart_path)
+            await callback.message.answer_document(doc, caption=f"📉 {name} — {symbol}\nافتح الملف في المتصفح")
     except Exception:
         pass
 
@@ -652,8 +652,8 @@ async def cb_quick_chart(callback: CallbackQuery):
         name = info["name_ar"] if info else symbol
         chart_path = generate_chart(symbol, market, "1d", name=name)
         if chart_path:
-            photo = FSInputFile(chart_path)
-            await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
+            doc = FSInputFile(chart_path)
+            await callback.message.answer_document(doc, caption=f"📉 {name} — {symbol}\nافتح الملف في المتصفح")
             await callback.message.edit_text(f"📈 شارت {name} — {symbol}", reply_markup=back_button("main_menu"))
         else:
             await callback.message.edit_text(

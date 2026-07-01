@@ -1,12 +1,6 @@
 import os
+import json
 from typing import Optional
-
-import pandas as pd
-import mplfinance as mpf
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 from loguru import logger
 from services.market_data import get_ohlcv
@@ -20,177 +14,222 @@ def _ensure_chart_dir():
     os.makedirs(CHART_DIR, exist_ok=True)
 
 
-def _generate_simple_chart(symbol: str, market: str, timeframe: str, name: str, ohlcv: list, closes: list) -> Optional[str]:
-    try:
-        df = pd.DataFrame(ohlcv)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ background: #1a1a2e; color: #fff; font-family: system-ui, -apple-system, sans-serif; }}
+.header {{ padding: 15px 20px; background: #16213e; border-bottom: 1px solid #333; }}
+.header h1 {{ font-size: 18px; color: #fff; }}
+.header .info {{ font-size: 13px; color: #999; margin-top: 5px; }}
+#chart {{ width: 100%; height: 400px; }}
+#volume {{ width: 100%; height: 120px; }}
+.footer {{ padding: 10px 20px; font-size: 11px; color: #666; text-align: center; }}
+.levels {{ padding: 10px 20px; display: flex; gap: 20px; flex-wrap: wrap; }}
+.level {{ padding: 5px 12px; border-radius: 6px; font-size: 12px; }}
+.support {{ background: rgba(38,166,154,0.2); color: #26a69a; border: 1px solid #26a69a; }}
+.resistance {{ background: rgba(239,83,80,0.2); color: #ef5350; border: 1px solid #ef5350; }}
+.ema-badge {{ padding: 3px 8px; border-radius: 4px; font-size: 11px; margin-right: 8px; }}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>{name} ({symbol})</h1>
+<div class="info">{market_label} | {tf_label} | آخر تحديث: {updated}</div>
+<div style="margin-top:8px;">
+<span class="ema-badge" style="background:#E8A838;color:#000;">EMA 20</span>
+<span class="ema-badge" style="background:#E84A5F;color:#fff;">EMA 50</span>
+<span class="ema-badge" style="background:#A855F7;color:#fff;">EMA 200</span>
+</div>
+</div>
+<div class="levels">
+{levels_html}
+</div>
+<div id="chart"></div>
+<div id="volume"></div>
+<div class="footer">
+Powered by TradingView Lightweight Charts | هذا رسم بياني تعليمي وليس توصية مالية
+</div>
+<script>
+const chartData = {chart_data};
+const volumeData = {volume_data};
+const emaData = {ema_data};
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={"height_ratios": [3, 1]})
-        fig.patch.set_facecolor("#1a1a2e")
-        ax1.set_facecolor("#16213e")
-        ax2.set_facecolor("#16213e")
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+    layout: {{
+        background: {{ color: '#1a1a2e' }},
+        textColor: '#cccccc',
+        fontSize: 11,
+    }},
+    grid: {{
+        vertLines: {{ color: '#2a2a4e' }},
+        horzLines: {{ color: '#2a2a4e' }},
+    }},
+    crosshair: {{
+        mode: LightweightCharts.CrosshairMode.Normal,
+    }},
+    rightPriceScale: {{
+        borderColor: '#555555',
+    }},
+    timeScale: {{
+        borderColor: '#555555',
+        timeVisible: true,
+        secondsVisible: false,
+    }},
+}});
 
-        ax1.plot(df["timestamp"], df["close"], color="#26a69a", linewidth=1.5, label="Price")
+const volumeChart = LightweightCharts.createChart(document.getElementById('volume'), {{
+    layout: {{
+        background: {{ color: '#1a1a2e' }},
+        textColor: '#999999',
+        fontSize: 10,
+    }},
+    grid: {{
+        vertLines: {{ color: '#2a2a4e' }},
+        horzLines: {{ color: '#2a2a4e' }},
+    }},
+    rightPriceScale: {{
+        borderColor: '#555555',
+    }},
+    timeScale: {{
+        visible: false,
+    }},
+}});
 
-        ema20 = calculate_ema_series(closes, 20)
-        ema50 = calculate_ema_series(closes, 50)
-        df["EMA20"] = [v if v is not None else float("nan") for v in ema20]
-        df["EMA50"] = [v if v is not None else float("nan") for v in ema50]
+const candleSeries = chart.addCandlestickSeries({{
+    upColor: '#26a69a',
+    downColor: '#ef5350',
+    borderUpColor: '#26a69a',
+    borderDownColor: '#ef5350',
+    wickUpColor: '#26a69a',
+    wickDownColor: '#ef5350',
+}});
+candleSeries.setData(chartData);
 
-        ax1.plot(df["timestamp"], df["EMA20"], color="#E8A838", linewidth=0.8, label="EMA 20")
-        ax1.plot(df["timestamp"], df["EMA50"], color="#E84A5F", linewidth=0.8, label="EMA 50")
+const volumeSeries = volumeChart.addHistogramSeries({{
+    color: '#26a69a',
+    priceFormat: {{ type: 'volume' }},
+    priceScaleId: '',
+}});
+volumeSeries.priceScale().applyOptions({{
+    scaleMargins: {{ top: 0.8, bottom: 0 }},
+}});
+volumeSeries.setData(volumeData);
 
-        support, resistance = find_support_resistance(closes, lookback=20)
-        if support:
-            ax1.axhline(y=support, color="#4fc3f7", linestyle="--", linewidth=0.8, alpha=0.7)
-        if resistance:
-            ax1.axhline(y=resistance, color="#ef5350", linestyle="--", linewidth=0.8, alpha=0.7)
+if (emaData.ema20) {{
+    const ema20Series = chart.addLineSeries({{ color: '#E8A838', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }});
+    ema20Series.setData(emaData.ema20);
+}}
+if (emaData.ema50) {{
+    const ema50Series = chart.addLineSeries({{ color: '#E84A5F', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }});
+    ema50Series.setData(emaData.ema50);
+}}
+if (emaData.ema200) {{
+    const ema200Series = chart.addLineSeries({{ color: '#A855F7', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }});
+    ema200Series.setData(emaData.ema200);
+}}
 
-        ax1.tick_params(colors="#cccccc", labelsize=8)
-        ax1.spines["bottom"].set_color("#555555")
-        ax1.spines["top"].set_visible(False)
-        ax1.spines["left"].set_color("#555555")
-        ax1.spines["right"].set_visible(False)
+chart.timeScale().fitContent();
 
-        title_text = f"{name} - {symbol}" if name else symbol
-        ax1.set_title(title_text, color="#ffffff", fontsize=12)
-        ax1.legend(loc="upper left", fontsize=8, facecolor="#16213e", edgecolor="#555555", labelcolor="#cccccc")
-
-        ax2.bar(df["timestamp"], df["volume"], color="#26a69a", alpha=0.5)
-        ax2.tick_params(colors="#cccccc", labelsize=7)
-        ax2.spines["bottom"].set_color("#555555")
-        ax2.spines["top"].set_visible(False)
-        ax2.spines["left"].set_color("#555555")
-        ax2.spines["right"].set_visible(False)
-        ax2.set_ylabel("Volume", color="#999999", fontsize=8)
-
-        plt.tight_layout()
-
-        filename = f"{symbol}_{timeframe}.png".replace("/", "_").replace("\\", "_")
-        filepath = os.path.join(CHART_DIR, filename)
-        fig.savefig(filepath, dpi=100, facecolor="#1a1a2e")
-        plt.close(fig)
-
-        return filepath
-    except Exception as e:
-        logger.exception("Simple chart failed: {}", e)
-        return None
+chart.subscribeVisibleLogicalRangeChange(range => {{
+    volumeChart.timeScale().setVisibleLogicalRange(range);
+}});
+volumeChart.subscribeVisibleLogicalRangeChange(range => {{
+    chart.timeScale().setVisibleLogicalRange(range);
+}});
+</script>
+</body>
+</html>"""
 
 
-def generate_chart(symbol: str, market: str, timeframe: str = "1d", name: str = None) -> Optional[str]:
+def generate_chart_html(symbol: str, market: str, timeframe: str = "1d", name: str = None) -> Optional[str]:
     try:
         _ensure_chart_dir()
         ohlcv = get_ohlcv(symbol, market, timeframe, outputsize=200)
         if not ohlcv or len(ohlcv) < 30:
-            logger.warning("Not enough data for chart: {} {} {}", symbol, market, timeframe)
             return None
 
         closes = [d["close"] for d in ohlcv]
 
-        try:
-            return _generate_mpf_chart(symbol, market, timeframe, name, ohlcv, closes)
-        except Exception as e:
-            logger.warning("mplfinance failed, trying simple chart: {}", e)
-            return _generate_simple_chart(symbol, market, timeframe, name or symbol, ohlcv, closes)
+        from datetime import datetime, timezone
+        def to_ts(t):
+            dt = datetime.fromtimestamp(t, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d")
 
-    except Exception as e:
-        from loguru import logger
-        logger.exception("Chart generation failed for {} {}: {}", symbol, market, e)
-        return None
-
-
-def _generate_mpf_chart(symbol: str, market: str, timeframe: str, name: str, ohlcv: list, closes: list) -> Optional[str]:
-    try:
-        df = pd.DataFrame(ohlcv)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-        df.set_index("timestamp", inplace=True)
-        df.rename(columns={
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume",
-        }, inplace=True)
+        chart_data = []
+        volume_data = []
+        for d in ohlcv:
+            ts = to_ts(d["timestamp"])
+            chart_data.append({
+                "time": ts,
+                "open": round(d["open"], 6),
+                "high": round(d["high"], 6),
+                "low": round(d["low"], 6),
+                "close": round(d["close"], 6),
+            })
+            volume_data.append({
+                "time": ts,
+                "value": d["volume"],
+                "color": "#26a69a" if d["close"] >= d["open"] else "#ef5350",
+            })
 
         ema20 = calculate_ema_series(closes, 20)
         ema50 = calculate_ema_series(closes, 50)
         ema200 = calculate_ema_series(closes, 200)
 
-        df["EMA20"] = [v if v is not None else float("nan") for v in ema20]
-        df["EMA50"] = [v if v is not None else float("nan") for v in ema50]
-        df["EMA200"] = [v if v is not None else float("nan") for v in ema200]
+        ema_data = {}
+
+        def build_ema(ema_list):
+            data = []
+            for i, v in enumerate(ema_list):
+                if v is not None:
+                    data.append({"time": to_ts(ohlcv[i]["timestamp"]), "value": round(v, 6)})
+            return data if data else None
+
+        ema_data["ema20"] = build_ema(ema20)
+        ema_data["ema50"] = build_ema(ema50)
+        ema_data["ema200"] = build_ema(ema200)
 
         support, resistance = find_support_resistance(closes, lookback=20)
 
-        apds = []
+        levels_html = ""
+        if support:
+            levels_html += f'<div class="level support">🟢 الدعم: {support:,.4f}</div>'
+        if resistance:
+            levels_html += f'<div class="level resistance">🔴 المقاومة: {resistance:,.4f}</div>'
 
-        if ema20[-1] is not None:
-            apds.append(mpf.make_addplot(df["EMA20"], color="#E8A838", width=0.8, label="EMA 20"))
-        if ema50[-1] is not None:
-            apds.append(mpf.make_addplot(df["EMA50"], color="#E84A5F", width=0.8, label="EMA 50"))
-        if ema200[-1] is not None:
-            apds.append(mpf.make_addplot(df["EMA200"], color="#A855F7", width=0.8, label="EMA 200"))
+        market_labels = {"SAUDI": "السوق السعودي", "US": "السوق الأمريكي", "CRYPTO": "العملات الرقمية"}
+        tf_labels = {"1d": "يومي", "1h": "ساعي", "15m": "15 دقيقة", "4h": "4 ساعات", "1w": "أسبوعي"}
 
-        hlines = []
-        if support is not None:
-            hlines.append(support)
-        if resistance is not None:
-            hlines.append(resistance)
-
-        mc = mpf.make_marketcolors(
-            up="#26a69a",
-            down="#ef5350",
-            edge="inherit",
-            wick="inherit",
-            volume="inherit",
-        )
-        s = mpf.make_mpf_style(
-            base_mpf_style="nightclouds",
-            marketcolors=mc,
-            rc={
-                "font.size": 9,
-                "axes.labelsize": 9,
-                "axes.labelcolor": "#cccccc",
-                "xtick.color": "#999999",
-                "ytick.color": "#999999",
-                "axes.edgecolor": "#555555",
-                "figure.facecolor": "#1a1a2e",
-                "axes.facecolor": "#16213e",
-            },
+        html = HTML_TEMPLATE.format(
+            title=f"{name or symbol} - {symbol}",
+            name=name or symbol,
+            symbol=symbol,
+            market_label=market_labels.get(market.upper(), market),
+            tf_label=tf_labels.get(timeframe, timeframe),
+            updated=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            levels_html=levels_html,
+            chart_data=json.dumps(chart_data),
+            volume_data=json.dumps(volume_data),
+            ema_data=json.dumps(ema_data),
         )
 
-        filename = f"{symbol}_{timeframe}.png".replace("/", "_").replace("\\", "_")
+        filename = f"{symbol}_{timeframe}.html".replace("/", "_").replace("\\", "_")
         filepath = os.path.join(CHART_DIR, filename)
-
-        fig, axes = mpf.plot(
-            df,
-            type="candle",
-            style=s,
-            volume=True,
-            addplot=apds,
-            hlines=dict(hlines=hlines, colors=["#4fc3f7"] * len(hlines), linestyle="--", linewidths=0.8),
-            savefig=filepath,
-            returnfig=True,
-            figsize=(12, 7),
-            tight_layout=True,
-            ylabel="",
-            ylabel_lower="",
-        )
-
-        market_name = {"SAUDI": "Saudi", "US": "US", "CRYPTO": "Crypto"}.get(market.upper(), market)
-        tf_name = {"1d": "Daily", "1h": "1H", "15m": "15min", "4h": "4H", "1w": "Weekly"}.get(timeframe, timeframe)
-        display_name = name if name else symbol
-        title_text = f"{display_name} - {symbol}"
-        subtitle_text = f"{market_name} | {tf_name}"
-
-        axes[0].set_title(title_text, color="#ffffff", fontsize=12)
-        axes[0].text(0.5, -0.12, subtitle_text, transform=axes[0].transAxes,
-                     color="#999999", fontsize=9, ha="center", va="top")
-
-        fig.savefig(filepath, bbox_inches="tight", dpi=100)
-        plt.close(fig)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(html)
 
         return filepath
+
     except Exception as e:
-        logger.warning("mplfinance chart failed: {}", e)
-        raise
+        logger.exception("HTML chart generation failed for {} {}: {}", symbol, market, e)
+        return None
+
+
+def generate_chart(symbol: str, market: str, timeframe: str = "1d", name: str = None) -> Optional[str]:
+    return generate_chart_html(symbol, market, timeframe, name)

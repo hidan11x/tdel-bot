@@ -76,12 +76,12 @@ async def cb_chart_generate(callback: CallbackQuery):
     market_key = {"SAUDI": "saudi", "US": "us", "CRYPTO": "crypto"}.get(market, "us")
     kb = symbol_actions(symbol, market_key)
 
-    caption = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})"
+    caption = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})\nافتح الملف في المتصفح لرؤية الشارت التفاعلي"
 
     try:
-        photo = FSInputFile(chart_path)
+        doc = FSInputFile(chart_path)
         await callback.message.delete()
-        await callback.message.answer_photo(photo, caption=caption, reply_markup=kb)
+        await callback.message.answer_document(doc, caption=caption, reply_markup=kb)
     except Exception:
         await callback.message.edit_text(
             f"{caption}\n\n⚠️ تعذر إرسال الشارت. حاول مرة أخرى.",
