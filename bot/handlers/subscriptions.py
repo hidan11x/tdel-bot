@@ -35,8 +35,75 @@ async def _get_user(telegram_id: int):
 @router.callback_query(F.data == "subscription")
 async def cb_subscription(callback: CallbackQuery):
     await callback.answer()
-    text = "💎 اختر خطة الاشتراك المناسبة لك:"
-    await callback.message.edit_text(text, reply_markup=subscription_plans())
+    from config import settings
+    text = (
+        "💎 خطط الاشتراك\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "🥉 Basic — {:.0f} ريال / شهر\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "✅ فحص فني (30 يومياً)\n"
+        "✅ 3 أسواق (سعودي/أمريكي/كريبتو)\n"
+        "✅ تنبيهات (15)\n"
+        "✅ قائمة متابعة (20)\n"
+        "✅ الشارت\n"
+        "✅ تصفح الرموز\n"
+        "❌ الخريطة الحرارية\n"
+        "❌ أخبار السوق\n"
+        "❌ حالة السوق\n"
+        "❌ مقارنة\n"
+        "❌ تتبع الأسعار\n"
+        "❌ تحليل متعدد الفريمات\n"
+        "❌ إشارات VIP\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "🥈 Pro — {:.0f} ريال / شهر\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "✅ كل ميزات Basic\n"
+        "✅ فحص فني (100 يومياً)\n"
+        "✅ تنبيهات (50)\n"
+        "✅ قائمة متابعة (50)\n"
+        "✅ الخريطة الحرارية\n"
+        "✅ أخبار السوق\n"
+        "✅ حالة السوق\n"
+        "✅ تقارير يومية\n"
+        "✅ مقارنة\n"
+        "✅ تتبع الأسعار\n"
+        "✅ أقوى القراءات\n"
+        "✅ مشاركة التحليل\n"
+        "✅ تصدير السجل\n"
+        "❌ تحليل متعدد الفريمات\n"
+        "❌ إشارات VIP\n"
+        "❌ دعوة صديق\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "🥇 VIP — {:.0f} ريال / شهر\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "✅ كل ميزات Pro\n"
+        "✅ فحص فني (غير محدود ∞)\n"
+        "✅ تنبيهات (غير محدود ∞)\n"
+        "✅ قائمة متابعة (غير محدود ∞)\n"
+        "✅ 🔄 تحليل متعدد الفريمات\n"
+        "✅ 🚀 إشارات VIP\n"
+        "✅ 🎁 دعوة صديق\n"
+        "✅ 🌐 تبديل لغة\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "💎 Lifetime — {:.0f} ريال (مرة واحدة)\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "✅ كل ميزات VIP مدى الحياة!\n\n"
+        "للاشتراك أو للحصول على كود تفعيل:\n"
+        "👤 @hidanx11\n\n"
+        "أو أدخل كود التفعيل إذا كان لديك:"
+    ).format(
+        settings.basic_price,
+        settings.pro_price,
+        settings.vip_price,
+        settings.lifetime_price,
+    )
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 أدخل كود التفعيل", callback_data="enter_code")
+    builder.button(text="👤 تواصل مع الدعم", callback_data="support")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(1, 1, 1)
+    await callback.message.edit_text(text[:4000], reply_markup=builder.as_markup())
 
 
 @router.message(Command("plans"))
