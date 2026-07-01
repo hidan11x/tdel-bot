@@ -5,7 +5,32 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import settings
 
-MAIN_MENU_BUTTONS: list[tuple[str, str]] = [
+PLAN_FEATURES = {
+    "free": [
+        "subscription", "support", "help",
+    ],
+    "basic": [
+        "scan_quick", "symbol_browser", "market:saudi", "market:us", "market:crypto",
+        "my_alerts", "my_watchlist", "chart_menu", "subscription", "support_ticket", "support", "help",
+    ],
+    "pro": [
+        "scan_quick", "symbol_browser", "heatmap", "market:saudi", "market:us", "market:crypto",
+        "market_overview", "news_menu", "daily_reports", "compare",
+        "my_alerts", "price_trackers", "my_watchlist", "chart_menu", "top_readings",
+        "share_menu", "export_history", "referral_menu",
+        "subscription", "support_ticket", "support", "help",
+    ],
+    "vip": [
+        "scan_quick", "symbol_browser", "heatmap", "market:saudi", "market:us", "market:crypto",
+        "market_overview", "news_menu", "daily_reports", "compare",
+        "my_alerts", "price_trackers", "my_watchlist", "chart_menu", "top_readings",
+        "share_menu", "export_history", "referral_menu",
+        "my_profile", "language_toggle",
+        "subscription", "support_ticket", "support", "help",
+    ],
+}
+
+ALL_BUTTONS: list[tuple[str, str]] = [
     ("📊 فحص سريع", "scan_quick"),
     ("🔍 تصفح الرموز", "symbol_browser"),
     ("🗺️ الخريطة الحرارية", "heatmap"),
@@ -32,11 +57,17 @@ MAIN_MENU_BUTTONS: list[tuple[str, str]] = [
     ("📋 المساعدة", "help"),
 ]
 
+MAIN_MENU_BUTTONS = ALL_BUTTONS
 
-def main_menu() -> InlineKeyboardMarkup:
+
+def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
+    allowed = PLAN_FEATURES.get(plan, PLAN_FEATURES["free"])
+
     builder = InlineKeyboardBuilder()
-    for text, cb in MAIN_MENU_BUTTONS:
-        builder.button(text=text, callback_data=cb)
+    for text, cb in ALL_BUTTONS:
+        cb_key = cb.split(":")[0] + ":*" if ":" in cb else cb
+        if cb in allowed or cb_key in allowed:
+            builder.button(text=text, callback_data=cb)
     builder.adjust(2)
     return builder.as_markup()
 

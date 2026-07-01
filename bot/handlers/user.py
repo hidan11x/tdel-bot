@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from database import get_session
 from models import User, MarketSettings
+from config import settings
 from bot.keyboards.main import (
     main_menu, market_menu, scan_type_menu, profile_menu, back_button, daily_report_menu,
     symbol_browser_menu, sectors_menu, symbol_list_menu, symbol_detail_menu,
@@ -129,7 +130,7 @@ async def cmd_start(message: Message, command=None):
             "مرحباً بك في البوت التعليمي لمتابعة الأسواق المالية 🤖\n\n"
             "اختر من القائمة أدناه:"
         )
-        await message.answer(text, reply_markup=main_menu())
+        await message.answer(text, reply_markup=main_menu(user.plan))
 
 
 @router.message(Command("help"))
@@ -145,7 +146,7 @@ async def cmd_help(message: Message):
         "/subscribe - الاشتراك\n\n"
         "يمكنك استخدام الأزرار أدناه للتنقل بين القوائم."
     )
-    await message.answer(text, reply_markup=main_menu())
+    await message.answer(text, reply_markup=main_menu("vip"))
 
 
 @router.message(Command("daily"))
@@ -234,7 +235,7 @@ async def cmd_status(message: Message):
         for key, name in market_map.items():
             status_lines.append(f"{name}: 🟢 مفتوح")
 
-    await message.answer("\n".join(status_lines), reply_markup=main_menu())
+    await message.answer("\n".join(status_lines), reply_markup=main_menu("vip"))
 
 
 @router.message(Command("profile"))
@@ -308,11 +309,15 @@ async def cb_my_profile(callback: CallbackQuery):
 async def cb_main_menu(callback: CallbackQuery):
     await callback.answer()
     _user_context.pop(callback.from_user.id, None)
+    user = await _get_user(callback.from_user.id)
+    plan = user.plan if user else "free"
+    if user and user.telegram_id in settings.admin_ids:
+        plan = "vip"
     text = (
         "مرحباً بك في البوت التعليمي لمتابعة الأسواق المالية 🤖\n\n"
         "اختر من القائمة أدناه:"
     )
-    await callback.message.edit_text(text, reply_markup=main_menu())
+    await callback.message.edit_text(text, reply_markup=main_menu(plan))
 
 
 @router.callback_query(F.data.in_({"market:saudi", "market:us", "market:crypto"}))
@@ -372,7 +377,7 @@ async def cb_help(callback: CallbackQuery):
         "/subscribe - الاشتراك\n\n"
         "يمكنك استخدام الأزرار أدناه للتنقل بين القوائم."
     )
-    await callback.message.edit_text(text, reply_markup=main_menu())
+    await callback.message.edit_text(text, reply_markup=main_menu("vip"))
 
 
 @router.callback_query(F.data == "support")

@@ -105,7 +105,7 @@ async def cb_subscribe_plan(callback: CallbackQuery):
 
         await callback.message.edit_text(
             f"✅ تم تفعيل الفترة التجريبية لمدة 7 أيام! استمتع بميزات الباقة الأساسية.",
-            reply_markup=main_menu(),
+            reply_markup=main_menu("vip"),
         )
         return
 
@@ -139,7 +139,7 @@ async def handle_activation_code(message: Message):
     if "بنجاح" in result:
         await message.answer(
             f"✅ {result}\n\nتم تفعيل اشتراكك بنجاح! 🎉",
-            reply_markup=main_menu(),
+            reply_markup=main_menu("vip"),
         )
     else:
         await message.answer(f"❌ {result}\n\nتواصل مع الدعم: @hidanx11", reply_markup=back_button("main_menu"))
