@@ -90,7 +90,24 @@ async def main() -> None:
     )
 
     settings.validate()
+
+    if "postgresql" in settings.database_url:
+        from models import Base
+        logger.info("PostgreSQL detected, dropping old tables...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        logger.info("Old tables dropped")
+
     await init_db()
+
+    if "postgresql" in settings.database_url:
+        try:
+            import subprocess
+            subprocess.run([sys.executable, "seed.py"], check=False, timeout=60)
+            subprocess.run([sys.executable, "seed_aliases.py"], check=False, timeout=60)
+            logger.info("Seed data inserted")
+        except Exception as e:
+            logger.warning("Seed skipped: {}", e)
 
     bot = Bot(
         token=settings.bot_token,
