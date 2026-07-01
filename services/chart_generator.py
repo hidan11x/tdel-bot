@@ -123,6 +123,28 @@ def generate_chart(
         else:
             df["EMA200"] = np.nan
 
+        try:
+            import pandas_ta as pta
+            bb = pta.bbands(pd.Series(closes), length=20, std=2)
+            if bb is not None and not bb.isna().all().all():
+                bb_cols = list(bb.columns)
+                if len(bb_cols) >= 3:
+                    df["BB_Upper"] = bb[bb_cols[0]].values[:len(df)]
+                    df["BB_Middle"] = bb[bb_cols[1]].values[:len(df)]
+                    df["BB_Lower"] = bb[bb_cols[2]].values[:len(df)]
+                else:
+                    df["BB_Upper"] = np.nan
+                    df["BB_Middle"] = np.nan
+                    df["BB_Lower"] = np.nan
+            else:
+                df["BB_Upper"] = np.nan
+                df["BB_Middle"] = np.nan
+                df["BB_Lower"] = np.nan
+        except Exception:
+            df["BB_Upper"] = np.nan
+            df["BB_Middle"] = np.nan
+            df["BB_Lower"] = np.nan
+
         support, resistance = find_support_resistance(closes, lookback=20)
 
         vol_series = df["Volume"].dropna()
@@ -154,6 +176,11 @@ def generate_chart(
             apds.append(mpf.make_addplot(df["EMA50"], color="#42A5F5", width=2.0))
         if not df["EMA200"].isna().all():
             apds.append(mpf.make_addplot(df["EMA200"], color="#CE93D8", width=1.5))
+
+        if not df["BB_Upper"].isna().all():
+            apds.append(mpf.make_addplot(df["BB_Upper"], color="#42A5F5", width=0.7, alpha=0.5))
+        if not df["BB_Lower"].isna().all():
+            apds.append(mpf.make_addplot(df["BB_Lower"], color="#42A5F5", width=0.7, alpha=0.5))
 
         hlines = []
         hlines_colors = []
@@ -251,6 +278,9 @@ def generate_chart(
         ema20_val = ema20[-1] if ema20 and ema20[-1] is not None else None
         ema50_val = ema50[-1] if ema50 and ema50[-1] is not None else None
 
+        bb_upper_val = df["BB_Upper"].iloc[-1] if not df["BB_Upper"].isna().all() else None
+        bb_lower_val = df["BB_Lower"].iloc[-1] if not df["BB_Lower"].isna().all() else None
+
         trend_label = "Up" if change_pct > 0.5 else ("Down" if change_pct < -0.5 else "Side")
         trend_color = "#26a69a" if trend_label == "Up" else ("#ef5350" if trend_label == "Down" else "#FFCA28")
 
@@ -262,6 +292,11 @@ def generate_chart(
             f"Resist: {_fmt_price(resistance)}",
             f"Vol: {vol_status} ({vol_ratio:.1f}x)",
         ]
+
+        if bb_upper_val and not np.isnan(bb_upper_val):
+            summary_lines.append(f"BB Up: {_fmt_price(float(bb_upper_val))}")
+        if bb_lower_val and not np.isnan(bb_lower_val):
+            summary_lines.append(f"BB Lo: {_fmt_price(float(bb_lower_val))}")
 
         summary_text = "\n".join(summary_lines)
         axes[0].text(

@@ -101,6 +101,48 @@ def calculate_all(df: pd.DataFrame) -> Dict[str, any]:
         result["stoch_k"] = None
         result["stoch_d"] = None
 
+    try:
+        if isinstance(closes, pd.Series):
+            closes_series = closes
+        else:
+            closes_series = pd.Series(closes)
+
+        ichimoku = ta.ichimoku(closes_series, tenkan=9, kijun=26, senkou=52)
+        if ichimoku is not None:
+            ichi_df = ichimoku[0] if isinstance(ichimoku, tuple) else ichimoku
+            if hasattr(ichi_df, 'isna') and not ichi_df.isna().all().all():
+                for col in ichi_df.columns:
+                    val = ichi_df[col].iloc[-1] if len(ichi_df) > 0 else None
+                    key = f"ichi_{col.lower().replace(' ', '_').replace('__', '_')}"
+                    if val is not None and not pd.isna(val):
+                        result[key] = float(val)
+                    else:
+                        result[key] = None
+            else:
+                result["ichi_tenkan"] = None
+                result["ichi_kijun"] = None
+        else:
+            result["ichi_tenkan"] = None
+            result["ichi_kijun"] = None
+    except Exception:
+        result["ichi_tenkan"] = None
+        result["ichi_kijun"] = None
+
+    if not atr_df.empty and all(c in atr_df.columns for c in ["high", "low", "close", "volume"]):
+        try:
+            vwap_df = atr_df.copy()
+            if not isinstance(vwap_df.index, pd.DatetimeIndex):
+                vwap_df.index = pd.date_range(end=datetime.now(), periods=len(vwap_df), freq="D")
+            vwap = ta.vwap(vwap_df["high"], vwap_df["low"], vwap_df["close"], vwap_df["volume"])
+            if vwap is not None and not vwap.isna().all():
+                result["vwap"] = float(vwap.iloc[-1])
+            else:
+                result["vwap"] = None
+        except Exception:
+            result["vwap"] = None
+    else:
+        result["vwap"] = None
+
     return result
 
 

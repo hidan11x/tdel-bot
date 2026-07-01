@@ -526,3 +526,41 @@ async def cb_my_news_alerts(callback: CallbackQuery):
 
     text = format_news_items(all_news[:8], "لرموزك المتابعة")
     await callback.message.edit_text(text[:4000], reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "my_stats")
+async def cb_my_stats(callback: CallbackQuery):
+    await callback.answer()
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("المستخدم غير موجود.", reply_markup=back_button("main_menu"))
+        return
+
+    from services.user_stats import get_user_statistics
+    stats = await get_user_statistics(user.id)
+    if stats:
+        await callback.message.edit_text(stats[:4000], reply_markup=back_button("main_menu"))
+    else:
+        await callback.message.edit_text("❌ تعذر جلب إحصائياتك.", reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "dividends")
+async def cb_dividends(callback: CallbackQuery):
+    await callback.answer()
+    from services.user_stats import get_dividend_schedule
+    text = await get_dividend_schedule()
+    await callback.message.edit_text(text[:4000], reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "rs_compare")
+async def cb_rs_compare(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "rs_compare"}
+    text = (
+        "💪 مقارنة القوة النسبية\n\n"
+        "اكتب رمزين للمقارنة:\n\n"
+        "مثال: 2222.SR 2010.SR\n"
+        "(أرامكو vs سابك)\n\n"
+        "أو: AAPL MSFT"
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("main_menu"))

@@ -771,6 +771,9 @@ async def handle_text_input(message: Message):
         elif context_type == "risk_calc":
             await handle_risk_calc_input(message)
             return
+        elif context_type == "rs_compare":
+            await handle_rs_compare_input(message)
+            return
 
     query = message.text.strip()
     if len(query) < 2:
@@ -963,3 +966,43 @@ async def handle_risk_calc_input(message: Message):
 
     result_text = format_risk_calc(calc)
     await message.answer(result_text[:4000], reply_markup=back_button("main_menu"))
+
+
+async def handle_rs_compare_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "rs_compare":
+        return
+
+    text = message.text.strip()
+    parts = text.split()
+    _user_context.pop(telegram_id, None)
+
+    if len(parts) < 2:
+        await message.answer(
+            "❌ اكتب رمزين للمقارنة.\nمثال: 2222.SR 2010.SR",
+            reply_markup=back_button("main_menu"),
+        )
+        return
+
+    symbol1 = parts[0].upper()
+    symbol2 = parts[1].upper()
+
+    await message.answer(f"💪 جاري مقارنة {symbol1} مع {symbol2}...")
+
+    try:
+        from services.relative_strength import compare_relative_strength
+
+        market = "SAUDI"
+        if symbol1.endswith("USDT") or symbol2.endswith("USDT"):
+            market = "CRYPTO"
+        elif not symbol1.endswith(".SR") and not symbol2.endswith(".SR"):
+            market = "US"
+
+        result = await compare_relative_strength(symbol1, symbol2, market)
+        if result:
+            await message.answer(result[:4000], reply_markup=back_button("main_menu"))
+        else:
+            await message.answer("❌ تعذر المقارنة. تأكد من الرموز.", reply_markup=back_button("main_menu"))
+    except Exception:
+        await message.answer("❌ حدث خطأ.", reply_markup=back_button("main_menu"))

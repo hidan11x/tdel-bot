@@ -28,6 +28,9 @@ class SmartSignal:
     stoch_k: Optional[float]
     stoch_d: Optional[float]
     rsi: Optional[float]
+    vwap: Optional[float]
+    ichi_tenkan: Optional[float]
+    ichi_kijun: Optional[float]
 
 
 def _to_score_value(score_obj: Any) -> float:
@@ -208,6 +211,9 @@ def build_signal(scan_result: dict) -> SmartSignal:
         stoch_k=indicators.get("stoch_k"),
         stoch_d=indicators.get("stoch_d"),
         rsi=indicators.get("rsi"),
+        vwap=indicators.get("vwap"),
+        ichi_tenkan=indicators.get("ichi_tenkan") or indicators.get("ichi_its_9"),
+        ichi_kijun=indicators.get("ichi_kijun") or indicators.get("ichi_its_26"),
     )
 
 
@@ -278,6 +284,11 @@ def format_signal_message(signal: SmartSignal) -> str:
     if signal.stoch_k is not None:
         stoch_label = "تشبع شرائي" if signal.stoch_k > 80 else ("تشبع بيعي" if signal.stoch_k < 20 else "محايد")
         extra_indicators += f"🔄 Stoch: {signal.stoch_k:.1f} ({stoch_label})\n"
+    if signal.vwap is not None:
+        extra_indicators += f"📊 VWAP: {signal.vwap:.4f}\n"
+    if signal.ichi_tenkan is not None and signal.ichi_kijun is not None:
+        ichi_signal = "صاعد" if signal.ichi_tenkan > signal.ichi_kijun else "هابط"
+        extra_indicators += f"☁️ Ichimoku: {ichi_signal} (T:{signal.ichi_tenkan:.2f} K:{signal.ichi_kijun:.2f})\n"
 
     if extra_indicators:
         extra_indicators = "\n" + extra_indicators
