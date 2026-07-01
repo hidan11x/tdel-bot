@@ -13,11 +13,19 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import TIMESTAMP as PG_TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
+
+
+def _DateTime():
+    from config import settings
+    if "postgresql" in settings.database_url:
+        return PG_TIMESTAMP(timezone=True)
+    return DateTime
 
 
 class Base(DeclarativeBase):
@@ -33,8 +41,8 @@ class User(Base):
     first_name: Mapped[str] = mapped_column(String)
     language_code: Mapped[str] = mapped_column(String, default="ar")
     plan: Mapped[str] = mapped_column(String, default="free")
-    subscription_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    subscription_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    subscription_start: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
+    subscription_end: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
     scans_today: Mapped[int] = mapped_column(Integer, default=0)
     last_scan_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -43,8 +51,8 @@ class User(Base):
     referred_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     daily_report: Mapped[bool] = mapped_column(Boolean, default=True)
     referral_days: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    last_active: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+    last_active: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
     referred_by_user: Mapped[Optional["User"]] = relationship(
         "User", remote_side="User.id", backref="referrals"
@@ -80,9 +88,9 @@ class ActivationCode(Base):
     max_uses: Mapped[int] = mapped_column(Integer, default=1)
     uses: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
 class Payment(Base):
@@ -98,7 +106,7 @@ class Payment(Base):
     activation_code_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("activation_codes.id"), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", back_populates="payments")
 
@@ -112,7 +120,7 @@ class Watchlist(Base):
     symbol: Mapped[str] = mapped_column(String)
     market: Mapped[str] = mapped_column(String)
     note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    added_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    added_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", back_populates="watchlists")
 
@@ -128,8 +136,8 @@ class Alert(Base):
     value: Mapped[float] = mapped_column(Float)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     triggered: Mapped[bool] = mapped_column(Boolean, default=False)
-    triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    triggered_at: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", back_populates="alerts")
 
@@ -145,7 +153,7 @@ class ScanLog(Base):
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     signal: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", back_populates="scan_logs")
 
@@ -157,7 +165,7 @@ class AdminLog(Base):
     admin_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
     action: Mapped[str] = mapped_column(String)
     details: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
 class MarketSettings(Base):
@@ -167,7 +175,7 @@ class MarketSettings(Base):
     market: Mapped[str] = mapped_column(String, unique=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     data_provider: Mapped[str] = mapped_column(String, default="yfinance")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
 
 class SystemSettings(Base):
@@ -176,7 +184,7 @@ class SystemSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     key: Mapped[str] = mapped_column(String, unique=True)
     value: Mapped[str] = mapped_column(String)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
 
 class ErrorLog(Base):
@@ -186,7 +194,7 @@ class ErrorLog(Base):
     source: Mapped[str] = mapped_column(String)
     message: Mapped[str] = mapped_column(String)
     details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
 class Notification(Base):
@@ -197,7 +205,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String)
     body: Mapped[str] = mapped_column(Text)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", back_populates="notifications")
 
@@ -224,8 +232,8 @@ class Coupon(Base):
     max_uses: Mapped[int] = mapped_column(Integer, default=1)
     uses: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
 class Symbol(Base):
@@ -245,8 +253,8 @@ class Symbol(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_popular: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
     aliases: Mapped[list["SymbolAlias"]] = relationship("SymbolAlias", back_populates="symbol", cascade="all, delete-orphan")
 
@@ -258,7 +266,7 @@ class SymbolAlias(Base):
     symbol_id: Mapped[int] = mapped_column(Integer, ForeignKey("symbols.id", ondelete="CASCADE"))
     alias: Mapped[str] = mapped_column(String)
     language: Mapped[str] = mapped_column(String, default="ar")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     symbol: Mapped["Symbol"] = relationship("Symbol", back_populates="aliases")
 
@@ -273,8 +281,8 @@ class SupportTicket(Base):
     status: Mapped[str] = mapped_column(String, default="open")
     admin_reply: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     replied_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
     user: Mapped["User"] = relationship("User", backref="support_tickets")
 
@@ -288,7 +296,7 @@ class DataProviderLog(Base):
     status: Mapped[str] = mapped_column(String)
     response_time_ms: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
 class PortfolioPosition(Base):
@@ -303,8 +311,8 @@ class PortfolioPosition(Base):
     side: Mapped[str] = mapped_column(String, default="long")
     status: Mapped[str] = mapped_column(String, default="open")
     exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", backref="portfolio_positions")
