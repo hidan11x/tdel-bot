@@ -28,6 +28,10 @@ async def startup():
     logger.info("Config validated")
 
     from database import init_db, engine
+    from models import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        logger.info("Dropped old tables (fresh schema)")
     await init_db()
     logger.info("Database initialized")
 
