@@ -75,7 +75,7 @@ async def increment_scan(user_id: int) -> None:
         dr = await session.execute(dq)
         daily = dr.scalar_one_or_none()
         if daily:
-            daily.scans = DailyUsage.scans + 1
+            daily.scans = (daily.scans or 0) + 1
         else:
             daily = DailyUsage(user_id=user_id, date=today, scans=1)
             session.add(daily)
@@ -137,7 +137,7 @@ async def activate_code(code: str, user_id: int) -> str:
         if ac.expires_at and ac.expires_at < datetime.now(timezone.utc):
             return "رمز التفعيل منتهي الصلاحية."
 
-        ac.uses = ActivationCode.uses + 1
+        ac.uses = (ac.uses or 0) + 1
 
         user.plan = ac.plan
         user.subscription_start = datetime.now(timezone.utc)

@@ -277,7 +277,8 @@ async def _admin_user_unban(cq: CallbackQuery, telegram_id: int):
 async def _admin_subs(cq: CallbackQuery):
     async with get_session() as session:
         total = (await session.execute(select(func.count(User.id)))).scalar()
-        active = (await session.execute(select(func.count(User.id)).where(User.subscription_end > datetime.now(timezone.utc)))).scalar()
+        now_utc = datetime.now(timezone.utc)
+        active = (await session.execute(select(func.count(User.id)).where(User.subscription_end > now_utc))).scalar()
         plan_counts = {}
         for p in ["free", "basic", "pro", "vip", "lifetime"]:
             cnt = (await session.execute(select(func.count(User.id)).where(User.plan == p))).scalar()
@@ -501,8 +502,14 @@ async def handle_extend_days(msg: Message, state: FSMContext):
             result = await session.execute(select(User).where(User.telegram_id == telegram_id))
             u = result.scalar_one_or_none()
             if u:
-                if u.subscription_end and u.subscription_end > datetime.now(timezone.utc):
-                    u.subscription_end += timedelta(days=days)
+                sub_end = u.subscription_end
+                if sub_end:
+                    if sub_end.tzinfo is None:
+                        sub_end = sub_end.replace(tzinfo=timezone.utc)
+                    if sub_end > datetime.now(timezone.utc):
+                        u.subscription_end = sub_end + timedelta(days=days)
+                    else:
+                        u.subscription_end = datetime.now(timezone.utc) + timedelta(days=days)
                 else:
                     u.subscription_end = datetime.now(timezone.utc) + timedelta(days=days)
     await log_admin(msg.from_user.id, f"extend_{telegram_id}_{days}d")

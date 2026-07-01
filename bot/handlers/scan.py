@@ -79,8 +79,7 @@ async def _perform_scan_and_report(
     signal = build_signal(result)
     report = format_signal_message(signal)
 
-    indicators = result.get("indicators", {})
-    closes = indicators.get("close")
+    closes = result.get("closes")
     if closes:
         patterns = detect_all_patterns(closes)
         if patterns:

@@ -52,7 +52,10 @@ class UserCheckMiddleware(BaseMiddleware):
                 return
 
             if db_user.subscription_end is not None:
-                remaining = (db_user.subscription_end - datetime.now(timezone.utc)).days
+                sub_end = db_user.subscription_end
+                if sub_end.tzinfo is None:
+                    sub_end = sub_end.replace(tzinfo=timezone.utc)
+                remaining = (sub_end - datetime.now(timezone.utc)).days
                 if 0 < remaining <= 3:
                     msg = f"⚠️ تنتهي صلاحية اشتراكك خلال {remaining} يوم"
                     if isinstance(event, Message):

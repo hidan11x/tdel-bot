@@ -61,6 +61,7 @@ async def scan_symbol(symbol: str, market: str, timeframe: str = "1d") -> Option
             "trend": trend,
             "support": support,
             "resistance": resistance,
+            "closes": closes,
             "indicators": indicators,
             "score": score,
             "rating": rating,
