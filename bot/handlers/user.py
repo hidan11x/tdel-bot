@@ -577,7 +577,7 @@ async def cb_quick_scan_sym(callback: CallbackQuery):
         can = await can_scan(user.id)
         if not can:
             await callback.message.edit_text(
-                "⚠️ لقد تجاوزت الحد اليومي للمسح الضوئي. يرجى الترقية إلى باقة مدفوعة.",
+                "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم للحصول على اشتراك أو تجربة:\n👤 @hidanx11",
                 reply_markup=back_button("main_menu"),
             )
             return

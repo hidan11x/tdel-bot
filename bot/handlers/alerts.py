@@ -94,7 +94,9 @@ async def cb_alert_create(callback: CallbackQuery):
     can = await can_add_alert(user.id)
     if not can:
         await callback.message.edit_text(
-            "⚠️ لقد تجاوزت الحد الأقصى للتنبيهات. يرجى حذف بعض التنبيهات أو الترقية.",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.
+
+تواصل مع الدعم: @hidanx11",
             reply_markup=back_button("my_alerts"),
         )
         return
@@ -157,7 +159,9 @@ async def handle_alert_value_input(message: Message):
     can = await can_add_alert(user.id)
     if not can:
         await message.answer(
-            "⚠️ لقد تجاوزت الحد الأقصى للتنبيهات.",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.
+
+تواصل مع الدعم: @hidanx11",
             reply_markup=back_button("my_alerts"),
         )
         _user_context.pop(telegram_id, None)

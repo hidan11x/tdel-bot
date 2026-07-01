@@ -43,9 +43,9 @@ class Settings:
     us_open: str = field(default_factory=lambda: _env("US_MARKET_OPEN", "15:30"))
     us_close: str = field(default_factory=lambda: _env("US_MARKET_CLOSE", "22:00"))
 
-    free_scans_daily: int = field(default_factory=lambda: _int("FREE_SCANS_DAILY", 5))
-    free_alerts: int = field(default_factory=lambda: _int("FREE_ALERTS", 3))
-    free_watchlist: int = field(default_factory=lambda: _int("FREE_WATCHLIST", 5))
+    free_scans_daily: int = field(default_factory=lambda: _int("FREE_SCANS_DAILY", 0))
+    free_alerts: int = field(default_factory=lambda: _int("FREE_ALERTS", 0))
+    free_watchlist: int = field(default_factory=lambda: _int("FREE_WATCHLIST", 0))
     basic_scans_daily: int = field(default_factory=lambda: _int("BASIC_SCANS_DAILY", 30))
     basic_alerts: int = field(default_factory=lambda: _int("BASIC_ALERTS", 15))
     basic_watchlist: int = field(default_factory=lambda: _int("BASIC_WATCHLIST", 20))

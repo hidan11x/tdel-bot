@@ -53,7 +53,7 @@ async def _perform_scan_and_report(
 ):
     can = await can_scan(user_id)
     if not can:
-        text = "⚠️ لقد تجاوزت الحد اليومي للمسح الضوئي. يرجى الترقية إلى باقة مدفوعة."
+        text = "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم للحصول على اشتراك أو تجربة:\n👤 @hidanx11"
         await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
         return
 
@@ -212,7 +212,7 @@ async def handle_symbol_input(message: Message):
     can = await can_scan(user.id)
     if not can:
         await message.answer(
-            "⚠️ لقد تجاوزت الحد اليومي للمسح الضوئي. يرجى الترقية إلى باقة مدفوعة.",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم للحصول على اشتراك أو تجربة:\n👤 @hidanx11",
             reply_markup=back_button("main_menu"),
         )
         _user_context.pop(telegram_id, None)
