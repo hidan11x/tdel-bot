@@ -55,7 +55,7 @@ async def startup():
     from bot.handlers import (
         user_router, scan_router, watchlist_router, alerts_router,
         charts_router, subscriptions_router, top_router, admin_router,
-        comparison_router, tickets_router, heatmap_router,
+        comparison_router, tickets_router, heatmap_router, features_router,
     )
     from bot.middlewares import ThrottlingMiddleware, UserCheckMiddleware
     from services.scheduler import ReportScheduler

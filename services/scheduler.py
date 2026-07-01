@@ -14,6 +14,8 @@ from services.subscriptions import check_subscription_expiry
 from services.signal_engine import build_signal, format_signal_message
 from services.alerts_engine import check_alerts, format_alert_message, get_user_telegram_id
 from services.symbols_service import get_symbol_info
+from services.price_tracker import check_price_trackers
+from services.market_overview import get_daily_market_summary
 from utils.formatter import format_technical_report
 from config import settings
 
@@ -79,6 +81,19 @@ class ReportScheduler:
             "interval",
             minutes=15,
             id="watchlist_monitor",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.check_price_trackers_job,
+            "interval",
+            minutes=3,
+            id="price_tracker_check",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.send_daily_market_summary,
+            CronTrigger(hour=7, minute=0),
+            id="daily_summary",
             replace_existing=True,
         )
         self.scheduler.start()
@@ -277,6 +292,30 @@ class ReportScheduler:
                 logger.info("Watchlist monitor sent {} notifications", sent_count)
         except Exception:
             logger.exception("monitor_watchlists failed")
+
+    async def check_price_trackers_job(self):
+        try:
+            count = await check_price_trackers(self.bot)
+            if count:
+                logger.info("Price trackers: {} triggered", count)
+        except Exception:
+            logger.exception("check_price_trackers_job failed")
+
+    async def send_daily_market_summary(self):
+        try:
+            summary = await get_daily_market_summary()
+            if not summary:
+                return
+            users = await self._get_active_users()
+            for user in users:
+                try:
+                    await self.bot.send_message(user.telegram_id, summary[:4000])
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    continue
+            logger.info("Daily market summary sent to {} users", len(users))
+        except Exception:
+            logger.exception("send_daily_market_summary failed")
 
     async def _get_active_users(self):
         async with get_session() as session:

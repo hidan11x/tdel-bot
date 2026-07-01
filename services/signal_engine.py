@@ -283,3 +283,10 @@ def format_signal_message(signal: SmartSignal) -> str:
         f"{signal.summary}\n\n"
         f"هذا تحليل آلي تعليمي وليس توصية مالية."
     )
+
+
+def format_signal_message_with_patterns(signal: SmartSignal, patterns_text: str = "") -> str:
+    base_msg = format_signal_message(signal)
+    if patterns_text:
+        return base_msg + "\n\n" + patterns_text
+    return base_msg

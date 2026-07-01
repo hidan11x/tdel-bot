@@ -52,8 +52,18 @@ async def _get_user(telegram_id: int):
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, command=None):
     telegram_id = message.from_user.id
+
+    ref_code = None
+    share_token = None
+    if command and command.args:
+        arg = command.args.strip()
+        if arg.startswith("ref"):
+            ref_code = arg
+        elif arg.startswith("share_"):
+            share_token = arg.replace("share_", "")
+
     async with get_session() as session:
         result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -69,6 +79,23 @@ async def cmd_start(message: Message):
             )
             session.add(user)
             await session.commit()
+
+            if ref_code:
+                from services.social import process_referral
+                await process_referral(ref_code, telegram_id)
+
+    if share_token:
+        from services.social import increment_share_view
+        share_data = await increment_share_view(share_token)
+        if share_data:
+            from services.scanner import scan_symbol
+            from services.signal_engine import build_signal, format_signal_message
+            result = await scan_symbol(share_data["symbol"], share_data["market"], "1d")
+            if result:
+                signal = build_signal(result)
+                report = format_signal_message(signal)
+                await message.answer(f"📤 تحليل مشاركة (مشاهدات: {share_data['views']})\n\n{report[:3500]}")
+                return
 
     text = (
         "مرحباً بك في البوت التعليمي لمتابعة الأسواق المالية 🤖\n\n"
@@ -697,8 +724,56 @@ async def handle_text_input(message: Message):
             from bot.handlers.comparison import handle_compare_input
             await handle_compare_input(message)
             return
+        elif context_type == "price_tracker":
+            await handle_price_tracker_input(message)
+            return
 
     query = message.text.strip()
     if len(query) < 2:
         return
     await _auto_search(message, query)
+
+
+async def handle_price_tracker_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "price_tracker":
+        return
+
+    symbol = ctx.get("symbol", "")
+    market = ctx.get("market", "US")
+
+    text = message.text.strip()
+    parts = text.split()
+
+    try:
+        target_price = float(parts[0].replace(",", ""))
+    except (ValueError, IndexError):
+        await message.answer("❌ السعر غير صالح. مثال: 150.50 فوق")
+        return
+
+    direction = "above"
+    if len(parts) > 1:
+        dir_text = parts[1].lower()
+        if dir_text in ("تحت", "below", "down", "نزول"):
+            direction = "below"
+
+    user = await _get_user(telegram_id)
+    if not user:
+        await message.answer("المستخدم غير موجود.")
+        _user_context.pop(telegram_id, None)
+        return
+
+    from services.price_tracker import create_price_tracker
+    tracker = await create_price_tracker(user.id, symbol, market, target_price, direction)
+    _user_context.pop(telegram_id, None)
+
+    arrow = "📈" if direction == "above" else "📉"
+    dir_text = "فوق" if direction == "above" else "تحت"
+    await message.answer(
+        f"✅ تم إنشاء تتبع السعر\n\n"
+        f"🔢 {symbol}\n"
+        f"{arrow} الهدف: {target_price:,.4f} ({dir_text})\n\n"
+        f"البوت يبعت لك رسالة فورية لما السعر يوصل للهدف.",
+        reply_markup=back_button("main_menu"),
+    )

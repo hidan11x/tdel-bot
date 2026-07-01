@@ -5,7 +5,8 @@ from sqlalchemy import select
 from database import get_session
 from models import User
 from services.scanner import scan_symbol, log_scan_to_db
-from services.signal_engine import build_signal, format_signal_message
+from services.signal_engine import build_signal, format_signal_message, format_signal_message_with_patterns
+from services.patterns import detect_all_patterns, format_patterns
 from services.subscriptions import can_scan, increment_scan
 from services.chart_generator import generate_chart
 from services.pdf_generator import generate_pdf_report
@@ -78,9 +79,16 @@ async def _perform_scan_and_report(
     signal = build_signal(result)
     report = format_signal_message(signal)
 
+    indicators = result.get("indicators", {})
+    closes = indicators.get("close")
+    if closes:
+        patterns = detect_all_patterns(closes)
+        if patterns:
+            patterns_text = format_patterns(patterns)
+            report = format_signal_message_with_patterns(signal, patterns_text)
+
     market_key = MARKET_KEY_MAP.get(market, market.lower())
     kb = symbol_actions(symbol, market_key)
-
     await callback.message.edit_text(report, reply_markup=kb)
 
     try:

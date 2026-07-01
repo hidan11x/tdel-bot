@@ -12,13 +12,19 @@ MAIN_MENU_BUTTONS: list[tuple[str, str]] = [
     ("📈 السوق السعودي", "market:saudi"),
     ("🇺🇸 السوق الأمريكي", "market:us"),
     ("₿ العملات الرقمية", "market:crypto"),
+    ("📊 حالة السوق", "market_overview"),
     ("📅 التقارير اليومية", "daily_reports"),
     ("📊 مقارنة", "compare"),
     ("🔔 تنبيهاتي", "my_alerts"),
+    ("🎯 تتبع الأسعار", "price_trackers"),
     ("⭐ قائمتي", "my_watchlist"),
     ("📉 الشارت", "chart_menu"),
     ("🏆 أقوى القراءات", "top_readings"),
+    ("📤 مشاركة تحليل", "share_menu"),
+    ("📥 تصدير سجلي", "export_history"),
+    ("🎁 دعوة صديق", "referral_menu"),
     ("👤 حسابي", "my_profile"),
+    ("🌐 اللغة", "language_toggle"),
     ("💳 الاشتراك", "subscription"),
     ("🎫 تذكرة دعم", "support_ticket"),
     ("🛠 الدعم", "support"),
@@ -76,10 +82,12 @@ def symbol_actions(symbol: str, market: str) -> InlineKeyboardMarkup:
     builder.button(text="📊 عرض الشارت", callback_data=f"chart:{symbol}:{market}")
     builder.button(text="⭐ إضافة للمراقبة", callback_data=f"watch_add:{symbol}:{market}")
     builder.button(text="🔔 إنشاء تنبيه", callback_data=f"alert_create:{symbol}:{market}")
+    builder.button(text="🎯 تتبع السعر", callback_data=f"ptrk:{symbol}:{market}")
+    builder.button(text="📤 مشاركة", callback_data=f"share:{symbol}:{market}")
     builder.button(text="📄 تصدير PDF", callback_data=f"export_pdf:{symbol}:{market}")
     builder.button(text="🔄 فحص فريم آخر", callback_data=f"rescan:{symbol}:{market}")
     builder.button(text="↩️ رجوع", callback_data=f"market:{market}")
-    builder.adjust(2, 2, 2)
+    builder.adjust(2, 2, 2, 2)
     return builder.as_markup()
 
 

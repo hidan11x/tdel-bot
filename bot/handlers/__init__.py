@@ -13,6 +13,7 @@ from .admin import router as admin_router
 from .comparison import router as comparison_router
 from .tickets import router as tickets_router
 from .heatmap import router as heatmap_router
+from .features import router as features_router
 
 __all__ = [
     "user_router",
@@ -26,5 +27,6 @@ __all__ = [
     "comparison_router",
     "tickets_router",
     "heatmap_router",
+    "features_router",
     "_user_context",
 ]

@@ -51,6 +51,8 @@ class User(Base):
     referred_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     daily_report: Mapped[bool] = mapped_column(Boolean, default=True)
     referral_days: Mapped[int] = mapped_column(Integer, default=0)
+    language: Mapped[str] = mapped_column(String, default="ar")
+    referrals_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
     last_active: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
@@ -316,3 +318,34 @@ class PortfolioPosition(Base):
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", backref="portfolio_positions")
+
+
+class PriceTracker(Base):
+    __tablename__ = "price_trackers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    symbol: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)
+    target_price: Mapped[float] = mapped_column(Float)
+    direction: Mapped[str] = mapped_column(String, default="above")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    triggered_at: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    user: Mapped["User"] = relationship("User", backref="price_trackers")
+
+
+class SharedAnalysis(Base):
+    __tablename__ = "shared_analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    symbol: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)
+    share_token: Mapped[str] = mapped_column(String, unique=True)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    user: Mapped["User"] = relationship("User", backref="shared_analyses")

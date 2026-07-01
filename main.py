@@ -24,6 +24,7 @@ from bot.handlers import (
     comparison_router,
     tickets_router,
     heatmap_router,
+    features_router,
 )
 from bot.middlewares import ThrottlingMiddleware, UserCheckMiddleware
 from services.scheduler import ReportScheduler
@@ -126,6 +127,7 @@ async def main() -> None:
     dp.include_router(comparison_router)
     dp.include_router(tickets_router)
     dp.include_router(heatmap_router)
+    dp.include_router(features_router)
 
     dp.message.middleware(ThrottlingMiddleware())
     dp.callback_query.middleware(ThrottlingMiddleware())
