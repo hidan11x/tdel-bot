@@ -13,29 +13,62 @@ from models import NewsItem, User
 
 
 RSS_FEEDS = {
+    "SAUDI": [
+        "https://news.google.com/rss/search?q=%D8%B3%D9%88%D9%82+%D8%A7%D9%84%D8%A3%D8%B3%D9%87%D9%85+%D8%A7%D9%84%D8%B3%D8%B9%D9%88%D8%AF%D9%8A+%D8%AA%D8%A7%D8%B3%D9%8A&hl=ar&gl=SA",
+        "https://news.google.com/rss/search?q=%D8%A3%D8%B1%D8%A7%D9%85%D9%83%D9%88+%D8%B3%D8%B9%D9%88%D8%AF%D9%8A%D8%A9&hl=ar&gl=SA",
+    ],
     "US": [
-        "https://finance.yahoo.com/news/rssindex",
-        "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+        "https://news.google.com/rss/search?q=%D8%A3%D8%B3%D9%87%D9%85+%D8%A3%D9%85%D8%B1%D9%8A%D9%83%D9%8A%D8%A9+%D9%88%D8%A7%D9%84+%D8%B3%D8%AA%D8%B1%D9%8A%D8%AA&hl=ar",
     ],
     "CRYPTO": [
-        "https://cointelegraph.com/rss",
-        "https://decrypt.co/feed",
-    ],
-    "SAUDI": [
-        "https://www.argaam.com/home/rss",
+        "https://news.google.com/rss/search?q=%D8%A8%D9%8A%D8%AA%D9%83%D9%88%D9%8A%D9%86+%D8%B9%D9%85%D9%84%D8%A7%D8%AA+%D8%B1%D9%82%D9%85%D9%8A%D8%A9&hl=ar",
     ],
 }
 
 SOURCE_NAMES = {
-    "finance.yahoo.com": "Yahoo Finance",
-    "feeds.content.dowjones.io": "MarketWatch",
-    "cointelegraph.com": "Cointelegraph",
-    "decrypt.co": "Decrypt",
-    "www.argaam.com": "Argaam",
+    "news.google.com": "Google News",
+    "argaam.com": "Argaam",
+    "tradingbelaraby.com": "تداول بالعربي",
+    "hawamer.com": "هوامير البورصة",
+    "mubasher.info": "مباشر",
+    "alarabiya.net": "العربية",
+    "aleqt.com": "الاقتصادية",
+    "al-jazirah.com": "الجزيرة",
+    "asharqbusiness.com": "الشرق بلومبرغ",
+    "sabq.org": "سبق",
+    "sayidaty.net": "سيدتي",
+    "alaraby.co.uk": "العربي",
+    "alhadath.net": "الحدث",
 }
+
+ARABIC_PATTERN = re.compile(r'[\u0600-\u06FF]')
 
 MAX_NEWS_PER_FETCH = 5
 MAX_TITLE_LENGTH = 200
+
+
+def _is_arabic(text: str) -> bool:
+    if not text:
+        return False
+    return bool(ARABIC_PATTERN.search(text))
+
+
+def _is_stock_related(title: str) -> bool:
+    stock_keywords = [
+        "سهم", "أسهم", "سوق", "تداول", "بورصة", "شركة", "استثمار",
+        "ارباح", "توزيعات", "اكتتاب", "مؤشر", "قطاع", "مالية",
+        "اقتصاد", "بنك", "أرامكو", "سابك", "تاسي", " tadawul",
+        "مرابحة", "صكوك", "اسناد", "ربح", "خسارة", "ميزانية",
+        "قوائم مالية", "راجحي", "أمريكا", "بيتكوين", "عملة",
+        "تأمين", "بتروكيماويات", "أسمنت", "ذهب", "نفط",
+        "وال ستريت", "nasdaq", "مساهمة", "قيمة سوقية",
+        "صندوق", "ريت", "ipO",
+    ]
+    title_lower = title.lower()
+    for kw in stock_keywords:
+        if kw.lower() in title_lower:
+            return True
+    return False
 
 
 def _parse_rss(xml_text: str, market: str) -> List[Dict]:
@@ -50,6 +83,12 @@ def _parse_rss(xml_text: str, market: str) -> List[Dict]:
             if not title or not link:
                 continue
 
+            if not _is_arabic(title):
+                continue
+
+            if not _is_stock_related(title):
+                continue
+
             dt = None
             if pub_date:
                 try:
@@ -60,7 +99,7 @@ def _parse_rss(xml_text: str, market: str) -> List[Dict]:
                 except Exception:
                     dt = None
 
-            source = "unknown"
+            source = "مصدر مالي"
             for src_key in SOURCE_NAMES:
                 if src_key in link:
                     source = SOURCE_NAMES[src_key]
@@ -152,12 +191,11 @@ def format_news_items(items: List[NewsItem], market_label: str = "") -> str:
     if not items:
         return "📰 لا توجد أخبار متاحة حالياً."
 
-    header = f"📰 آخر الأخبار{f' - {market_label}' if market_label else ''}\n\n"
+    header = f"📰 آخر أخبار السوق{f' - {market_label}' if market_label else ''}\n\n"
     lines = []
 
     for i, item in enumerate(items[:10], 1):
-        source_emoji = {"Yahoo Finance": "🇺🇸", "MarketWatch": "📊", "Cointelegraph": "₿", "Decrypt": "₿", "Argaam": "🇸🇦"}.get(item.source, "📰")
-        lines.append(f"{i}. {source_emoji} {item.title}")
+        lines.append(f"{i}. 📄 {item.title}")
         lines.append(f"   المصدر: {item.source}")
         lines.append(f"   🔗 {item.url}")
         lines.append("")
@@ -188,11 +226,9 @@ async def send_news_notifications(bot) -> int:
             market_label = {"US": "الأمريكي", "CRYPTO": "الرقمية", "SAUDI": "السعودي"}.get(market, market)
 
             for item in new_items:
-                source_emoji = {"Yahoo Finance": "🇺🇸", "MarketWatch": "📊", "Cointelegraph": "₿", "Decrypt": "₿", "Argaam": "🇸🇦"}.get(item["source"], "📰")
-
                 message = (
                     f"📰 خبر جديد - السوق {market_label}\n\n"
-                    f"{source_emoji} {item['title']}\n"
+                    f"📄 {item['title']}\n"
                     f"المصدر: {item['source']}\n"
                     f"🔗 {item['url']}"
                 )
