@@ -159,6 +159,114 @@ def detect_all_patterns(closes) -> List[Dict]:
     return patterns
 
 
+def detect_doji(ohlcv: list) -> Optional[Dict]:
+    if len(ohlcv) < 1:
+        return None
+    last = ohlcv[-1]
+    body = abs(last["close"] - last["open"])
+    high_low = last["high"] - last["low"]
+    if high_low > 0 and body / high_low < 0.1:
+        return {
+            "pattern": "doji",
+            "name_ar": "دوجي",
+            "name_en": "Doji",
+            "signal": "neutral",
+            "description": "نمط الدوجي يشير إلى تردد في السوق بانتظار اتجاه أوضح.",
+        }
+    return None
+
+
+def detect_hammer(ohlcv: list) -> Optional[Dict]:
+    if len(ohlcv) < 1:
+        return None
+    last = ohlcv[-1]
+    body = last["close"] - last["open"]
+    lower_shadow = min(last["open"], last["close"]) - last["low"]
+    upper_shadow = last["high"] - max(last["open"], last["close"])
+    if body > 0 and lower_shadow > 2 * abs(body) and upper_shadow < 0.3 * abs(body):
+        return {
+            "pattern": "hammer",
+            "name_ar": "المطرقة",
+            "name_en": "Hammer",
+            "signal": "bullish",
+            "description": "نمط المطرقة يشير إلى احتمال ارتداد صاعد.",
+        }
+    return None
+
+
+def detect_shooting_star(ohlcv: list) -> Optional[Dict]:
+    if len(ohlcv) < 1:
+        return None
+    last = ohlcv[-1]
+    body = last["close"] - last["open"]
+    upper_shadow = last["high"] - max(last["open"], last["close"])
+    lower_shadow = min(last["open"], last["close"]) - last["low"]
+    if body > 0 and upper_shadow > 2 * abs(body) and lower_shadow < 0.3 * abs(body):
+        return {
+            "pattern": "shooting_star",
+            "name_ar": "النجم الهابط",
+            "name_en": "Shooting Star",
+            "signal": "bearish",
+            "description": "نمط النجم الهابط يشير إلى احتمال انعكاس هابط.",
+        }
+    return None
+
+
+def detect_bullish_engulfing(ohlcv: list) -> Optional[Dict]:
+    if len(ohlcv) < 2:
+        return None
+    prev = ohlcv[-2]
+    curr = ohlcv[-1]
+    if prev["close"] < prev["open"] and curr["close"] > curr["open"]:
+        if curr["close"] > prev["open"] and curr["open"] < prev["close"]:
+            return {
+                "pattern": "bullish_engulfing",
+                "name_ar": "الابتلاع الصاعد",
+                "name_en": "Bullish Engulfing",
+                "signal": "bullish",
+                "description": "نمط الابتلاع الصاعد يشير إلى احتمال انعكاس صاعد.",
+            }
+    return None
+
+
+def detect_bearish_engulfing(ohlcv: list) -> Optional[Dict]:
+    if len(ohlcv) < 2:
+        return None
+    prev = ohlcv[-2]
+    curr = ohlcv[-1]
+    if prev["close"] > prev["open"] and curr["close"] < curr["open"]:
+        if curr["open"] > prev["close"] and curr["close"] < prev["open"]:
+            return {
+                "pattern": "bearish_engulfing",
+                "name_ar": "الابتلاع الهابط",
+                "name_en": "Bearish Engulfing",
+                "signal": "bearish",
+                "description": "نمط الابتلاع الهابط يشير إلى احتمال انعكاس هابط.",
+            }
+    return None
+
+
+def detect_all_candlestick_patterns(ohlcv: list) -> List[Dict]:
+    if not ohlcv or len(ohlcv) < 2:
+        return []
+
+    patterns = []
+    detectors = [
+        detect_doji,
+        detect_hammer,
+        detect_shooting_star,
+        detect_bullish_engulfing,
+        detect_bearish_engulfing,
+    ]
+
+    for detector in detectors:
+        result = detector(ohlcv)
+        if result:
+            patterns.append(result)
+
+    return patterns
+
+
 def format_patterns(patterns: List[Dict]) -> str:
     if not patterns:
         return ""

@@ -289,6 +289,119 @@ async def cb_vip_signals(callback: CallbackQuery):
         await callback.message.edit_text("❌ تعذر الحصول على إشارات.", reply_markup=back_button("main_menu"))
 
 
+@router.callback_query(F.data == "news:ALL")
+async def cb_news_all(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("📰 جاري جلب الأخبار...")
+
+    from services.news import get_recent_news, format_news_items
+    items = await get_recent_news(limit=10)
+
+    if not items:
+        await callback.message.edit_text("📰 لا توجد أخبار متاحة حالياً.", reply_markup=back_button("news_menu"))
+        return
+
+    text = format_news_items(items)
+    await callback.message.edit_text(text[:4000], reply_markup=back_button("news_menu"))
+
+
+@router.callback_query(F.data == "terms")
+async def cb_terms(callback: CallbackQuery):
+    await callback.answer()
+    from services.compliance import get_terms
+    text = get_terms()
+    await callback.message.edit_text(text[:4000], reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "screener_menu")
+async def cb_screener_menu(callback: CallbackQuery):
+    await callback.answer()
+    from services.screener import get_screener_list
+    screeners = get_screener_list()
+
+    builder = InlineKeyboardBuilder()
+    for s in screeners:
+        builder.button(text=s["name_ar"], callback_data=f"scr:{s['id']}")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(2)
+    await callback.message.edit_text("🔍 اختر نوع الفحص:", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("scr:"))
+async def cb_screener_run(callback: CallbackQuery):
+    await callback.answer()
+    screener_id = callback.data.split(":")[1]
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📈 السعودي", callback_data=f"scrrun:SAUDI:{screener_id}")
+    builder.button(text="🇺🇸 الأمريكي", callback_data=f"scrrun:US:{screener_id}")
+    builder.button(text="₿ الكريبتو", callback_data=f"scrrun:CRYPTO:{screener_id}")
+    builder.button(text="↩️ رجوع", callback_data="screener_menu")
+    builder.adjust(2, 1)
+    await callback.message.edit_text("اختر السوق:", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("scrrun:"))
+async def cb_screener_execute(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    market = parts[1]
+    screener_id = parts[2]
+
+    await callback.message.edit_text("🔍 جاري فحص السوق...")
+
+    from services.screener import run_screener
+    result = await run_screener(market, screener_id)
+
+    if result:
+        await callback.message.edit_text(result[:4000], reply_markup=back_button("screener_menu"))
+    else:
+        await callback.message.edit_text("❌ تعذر الفحص.", reply_markup=back_button("screener_menu"))
+
+
+@router.callback_query(F.data == "fib_menu")
+async def cb_fib_menu(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "fib_scan"}
+    text = (
+        "📐 مستويات فيبوناتشي\n\n"
+        "اكتب رمز الأصل (مثال: AAPL، 2222.SR، BTCUSDT):\n"
+        "البوت يحسب مستويات فيبوناتشي تلقائياً."
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "risk_calc")
+async def cb_risk_calc(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "risk_calc"}
+    text = (
+        "📊 حاسبة المخاطر\n\n"
+        "اكتب البيانات بهذا الشكل:\n\n"
+        "رأس_المال نسبة_المخاطرة سعر_الدخول وقف_الخسارة\n\n"
+        "مثال: 10000 2 150 145\n"
+        "(10000 ريال، 2% مخاطرة، دخول 150، وقف 145)\n\n"
+        "أو مع الهدف:\n"
+        "10000 2 150 145 160"
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "fear_greed")
+async def cb_fear_greed(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("😱 جاري جلب مؤشر الخوف والطمع...")
+
+    from services.fear_greed import get_fear_greed_index, format_fear_greed
+    data = await get_fear_greed_index()
+
+    if data:
+        text = format_fear_greed(data)
+        await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
+    else:
+        await callback.message.edit_text("❌ تعذر جلب المؤشر.", reply_markup=back_button("main_menu"))
+
+
 @router.callback_query(F.data.startswith("news:"))
 async def cb_news_detail(callback: CallbackQuery):
     await callback.answer()

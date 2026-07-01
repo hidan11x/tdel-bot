@@ -16,18 +16,19 @@ PLAN_FEATURES = {
     "pro": [
         "scan_quick", "symbol_browser", "heatmap", "market:saudi", "market:us", "market:crypto",
         "market_overview", "news_menu", "daily_reports", "compare",
+        "screener_menu", "fib_menu", "fear_greed",
         "my_alerts", "price_trackers", "my_watchlist", "chart_menu", "top_readings",
         "share_menu", "export_history",
-        "subscription", "support_ticket", "support", "help",
+        "subscription", "support_ticket", "support", "help", "terms",
     ],
     "vip": [
         "scan_quick", "symbol_browser", "heatmap", "market:saudi", "market:us", "market:crypto",
         "market_overview", "news_menu", "daily_reports", "compare",
-        "mtf_scan", "vip_signals",
+        "mtf_scan", "vip_signals", "screener_menu", "fib_menu", "risk_calc", "fear_greed",
         "my_alerts", "price_trackers", "my_watchlist", "chart_menu", "top_readings",
         "share_menu", "export_history", "referral_menu",
         "my_profile", "language_toggle",
-        "subscription", "support_ticket", "support", "help",
+        "subscription", "support_ticket", "support", "help", "terms",
     ],
 }
 
@@ -44,6 +45,10 @@ ALL_BUTTONS: list[tuple[str, str]] = [
     ("📊 مقارنة", "compare"),
     ("🔄 تحليل متعدد الفريمات", "mtf_scan"),
     ("🚀 إشارات VIP", "vip_signals"),
+    ("🔍 فاحص السوق", "screener_menu"),
+    ("📐 فيبوناتشي", "fib_menu"),
+    ("📊 حاسبة المخاطر", "risk_calc"),
+    ("😱 الخوف والطمع", "fear_greed"),
     ("🔔 تنبيهاتي", "my_alerts"),
     ("🎯 تتبع الأسعار", "price_trackers"),
     ("⭐ قائمتي", "my_watchlist"),
@@ -58,6 +63,7 @@ ALL_BUTTONS: list[tuple[str, str]] = [
     ("🎫 تذكرة دعم", "support_ticket"),
     ("🛠 الدعم", "support"),
     ("📋 المساعدة", "help"),
+    ("⚖️ الشروط والأحكام", "terms"),
 ]
 
 MAIN_MENU_BUTTONS = ALL_BUTTONS

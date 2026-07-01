@@ -753,6 +753,12 @@ async def handle_text_input(message: Message):
         elif context_type == "mtf_scan":
             await handle_mtf_scan_input(message)
             return
+        elif context_type == "fib_scan":
+            await handle_fib_input(message)
+            return
+        elif context_type == "risk_calc":
+            await handle_risk_calc_input(message)
+            return
 
     query = message.text.strip()
     if len(query) < 2:
@@ -828,7 +834,6 @@ async def handle_mtf_scan_input(message: Message):
 
     try:
         from services.scanner import scan_symbol_multi_timeframe
-        from services.signal_engine import build_signal, format_signal_message
         result = await scan_symbol_multi_timeframe(symbol, market)
 
         if not result:
@@ -866,3 +871,83 @@ async def handle_mtf_scan_input(message: Message):
         await message.answer(text[:4000], reply_markup=back_button("main_menu"))
     except Exception:
         await message.answer("❌ حدث خطأ أثناء التحليل.", reply_markup=back_button("main_menu"))
+
+
+async def handle_fib_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "fib_scan":
+        return
+
+    raw = message.text.strip()
+    _user_context.pop(telegram_id, None)
+
+    from services.search_engine import auto_detect_symbol
+    detected = await auto_detect_symbol(raw)
+
+    if not detected:
+        await message.answer("❌ تعذر التعرف على الرمز.", reply_markup=back_button("main_menu"))
+        return
+
+    symbol = detected["symbol"]
+    market = detected["market"]
+
+    await message.answer(f"📐 جاري حساب فيبوناتشي لـ {symbol}...")
+
+    try:
+        from services.scanner import scan_symbol
+        from services.fibonacci import get_fibonacci_from_scan, format_fibonacci
+
+        result = await scan_symbol(symbol, market, "1d")
+        if not result:
+            await message.answer("❌ تعذر الحصول على بيانات.", reply_markup=back_button("main_menu"))
+            return
+
+        fib = get_fibonacci_from_scan(result)
+        if not fib:
+            await message.answer("❌ تعذر حساب فيبوناتشي.", reply_markup=back_button("main_menu"))
+            return
+
+        text = format_fibonacci(fib)
+        text += "\n\n⚠️ هذا تحليل تعليمي وليس توصية مالية."
+        await message.answer(text[:4000], reply_markup=back_button("main_menu"))
+    except Exception:
+        await message.answer("❌ حدث خطأ.", reply_markup=back_button("main_menu"))
+
+
+async def handle_risk_calc_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "risk_calc":
+        return
+
+    text = message.text.strip()
+    parts = text.split()
+    _user_context.pop(telegram_id, None)
+
+    if len(parts) < 4:
+        await message.answer(
+            "❌ الصيغة خاطئة.\n\nاكتب: رأس_المال نسبة_المخاطرة سعر_الدخول وقف_الخسارة\nمثال: 10000 2 150 145",
+            reply_markup=back_button("main_menu"),
+        )
+        return
+
+    try:
+        capital = float(parts[0])
+        risk_pct = float(parts[1])
+        entry = float(parts[2])
+        stop = float(parts[3])
+        tp = float(parts[4]) if len(parts) > 4 else None
+    except ValueError:
+        await message.answer("❌ جميع القيم لازم أرقام.", reply_markup=back_button("main_menu"))
+        return
+
+    from services.risk_calculator import calculate_risk, format_risk_calc
+    calc = calculate_risk(capital, risk_pct, entry, stop, tp)
+
+    if not calc:
+        await message.answer("❌ تعذر الحساب. تأكد من القيم.", reply_markup=back_button("main_menu"))
+        return
+
+    result_text = format_risk_calc(calc)
+    await message.answer(result_text[:4000], reply_markup=back_button("main_menu"))
