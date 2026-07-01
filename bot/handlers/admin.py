@@ -29,9 +29,6 @@ class AdminStates(StatesGroup):
     broadcast_text = State()
     user_message = State()
     add_code_plan = State()
-    add_code_duration = State()
-    add_code_max_uses = State()
-    add_code_expiry = State()
     add_coupon_discount = State()
     add_coupon_max_uses = State()
     add_coupon_expiry = State()
@@ -123,15 +120,20 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await cq.answer()
     elif data == "admin_codes_create":
         await state.set_state(AdminStates.add_code_plan)
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
-        builder = InlineKeyboardBuilder()
-        builder.button(text="🥉 Basic", callback_data="admin_code_plan:basic")
-        builder.button(text="🥈 Pro", callback_data="admin_code_plan:pro")
-        builder.button(text="🥇 VIP", callback_data="admin_code_plan:vip")
-        builder.button(text="💎 Lifetime", callback_data="admin_code_plan:lifetime")
-        builder.button(text="↩️ رجوع", callback_data="admin_codes")
-        builder.adjust(2, 2, 1)
-        await cq.message.edit_text("اختر الخطة للكود:", reply_markup=builder.as_markup())
+        text = (
+            "➕ إنشاء كود تفعيل جديد\n\n"
+            "اكتب كل البيانات في رسالة وحدة بهذا الشكل:\n\n"
+            "الخطة المدة الاستخدامات\n\n"
+            "أمثلة:\n"
+            "basic 30d 1\n"
+            "pro 12h 1\n"
+            "vip permanent 1\n"
+            "basic 7d 5\n\n"
+            "الخطة: basic / pro / vip / lifetime\n"
+            "المدة: رقم + d (أيام) أو h (ساعات) أو permanent (دايم)\n"
+            "الاستخدامات: رقم (1 = لمرة وحدة)"
+        )
+        await cq.message.edit_text(text, reply_markup=back_button("admin_codes"))
         await cq.answer()
     elif data.startswith("admin_code_plan:"):
         plan = data.split(":")[1]
@@ -525,24 +527,57 @@ async def handle_extend_days(msg: Message, state: FSMContext):
     await state.clear()
 
 
-@router.message(AdminStates.add_code_duration)
-async def handle_code_duration(msg: Message, state: FSMContext):
-    try:
-        days = int(msg.text)
-    except ValueError:
-        return await msg.answer("❌ الرجاء إدخال رقم صحيح")
-    await state.update_data(code_duration=days)
-    await state.set_state(AdminStates.add_code_max_uses)
-    await msg.answer("أدخل الحد الأقصى لاستخدامات الكود (1-1000):", reply_markup=back_button("admin_codes"))
+@router.message(AdminStates.add_code_plan)
+async def handle_create_code_all_in_one(msg: Message, state: FSMContext):
+    text = msg.text.strip()
+    parts = text.split()
 
+    if len(parts) < 3:
+        await msg.answer(
+            "❌ الصيغة خاطئة.\n\nاكتب: الخطة المدة الاستخدامات\nمثال: basic 30d 1"
+        )
+        return
 
-@router.message(AdminStates.add_code_max_uses)
-async def handle_code_max_uses(msg: Message, state: FSMContext):
+    plan = parts[0].lower()
+    duration_str = parts[1].lower()
+    uses_str = parts[2]
+
+    valid_plans = ["basic", "pro", "vip", "lifetime"]
+    if plan not in valid_plans:
+        await msg.answer(f"❌ الخطة خاطئة. اختر واحدة: {', '.join(valid_plans)}")
+        return
+
     try:
-        max_uses = int(msg.text)
+        max_uses = int(uses_str)
+        if max_uses < 1:
+            raise ValueError
     except ValueError:
-        return await msg.answer("❌ الرجاء إدخال رقم صحيح")
-    data = await state.get_data()
+        await msg.answer("❌ الاستخدامات لازم رقم (1 = لمرة وحدة)")
+        return
+
+    if duration_str == "permanent" or duration_str == "دايم":
+        duration_days = 99999
+        duration_label = "دايم"
+    elif duration_str.endswith("h"):
+        try:
+            hours = int(duration_str[:-1])
+            duration_days = hours / 24
+            duration_label = f"{hours} ساعة"
+        except ValueError:
+            await msg.answer("❌ المدة بالساعات خاطئة. مثال: 12h")
+            return
+    elif duration_str.endswith("d"):
+        try:
+            days = int(duration_str[:-1])
+            duration_days = days
+            duration_label = f"{days} يوم"
+        except ValueError:
+            await msg.answer("❌ المدة بالأيام خاطئة. مثال: 30d")
+            return
+    else:
+        await msg.answer("❌ المدة خاطئة. استخدم: 30d (أيام) أو 12h (ساعات) أو permanent (دايم)")
+        return
+
     code = _code()
     async with get_session() as session:
         async with session.begin():
@@ -550,14 +585,24 @@ async def handle_code_max_uses(msg: Message, state: FSMContext):
             admin = result.scalar_one_or_none()
             ac = ActivationCode(
                 code=code,
-                plan=data["code_plan"],
-                duration_days=data["code_duration"],
+                plan=plan,
+                duration_days=int(duration_days) if duration_days != 99999 else 99999,
                 max_uses=max_uses,
+                uses=0,
+                is_active=True,
                 created_by=admin.id if admin else 0,
             )
             session.add(ac)
-    await log_admin(msg.from_user.id, f"create_code_{data['code_plan']}")
-    await msg.answer(f"✅ تم إنشاء الكود:\n\n`{code}`\n\nالخطة: {data['code_plan']}\nالمدة: {data['code_duration']} يوم\nالاستخدامات: {max_uses}")
+
+    await log_admin(msg.from_user.id, f"create_code_{plan}_{duration_label}")
+    await msg.answer(
+        f"✅ تم إنشاء الكود!\n\n"
+        f"الكود: <code>{code}</code>\n"
+        f"الخطة: {plan}\n"
+        f"المدة: {duration_label}\n"
+        f"الاستخدامات: {max_uses}\n\n"
+        f"أرسل هذا الكود للمستخدم لتفعيل اشتراكه."
+    )
     await state.clear()
 
 

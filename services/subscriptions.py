@@ -46,6 +46,9 @@ async def can_scan(user_id: int) -> bool:
         if not user.is_active:
             return False
 
+        if user.telegram_id in settings.admin_ids:
+            return True
+
         limits = get_plan_limits(user.plan)
         daily_limit = limits["scans_daily"]
 
@@ -88,6 +91,10 @@ async def can_add_alert(user_id: int) -> bool:
         user = await session.get(User, user_id)
         if not user:
             return False
+
+        if user.telegram_id in settings.admin_ids:
+            return True
+
         limits = get_plan_limits(user.plan)
         max_alerts = limits["max_alerts"]
         if max_alerts == -1:
@@ -107,6 +114,10 @@ async def can_add_watchlist_item(user_id: int) -> bool:
         user = await session.get(User, user_id)
         if not user:
             return False
+
+        if user.telegram_id in settings.admin_ids:
+            return True
+
         limits = get_plan_limits(user.plan)
         max_watchlist = limits["max_watchlist"]
         if max_watchlist == -1:
@@ -141,7 +152,11 @@ async def activate_code(code: str, user_id: int) -> str:
 
         user.plan = ac.plan
         user.subscription_start = datetime.now(timezone.utc)
-        user.subscription_end = get_subscription_end_date(ac.plan, user)
+
+        if ac.duration_days >= 99999:
+            user.subscription_end = datetime.now(timezone.utc) + timedelta(days=36525)
+        else:
+            user.subscription_end = datetime.now(timezone.utc) + timedelta(days=ac.duration_days)
 
         await session.commit()
         return f"تم تفعيل الباقة {ac.plan} بنجاح!"

@@ -36,20 +36,13 @@ class UserCheckMiddleware(BaseMiddleware):
 
             if db_user is None:
                 is_new_user = True
-                from datetime import timedelta
-                trial_days = 7
-                from config import settings
-                trial_days = getattr(settings, 'trial_days', 7) or 7
-                now_utc = datetime.now(timezone.utc)
                 db_user = User(
                     telegram_id=telegram_id,
                     username=user.username,
                     first_name=user.first_name or user.username or str(telegram_id),
                     language_code=user.language_code or "ar",
                     referral_code=f"ref{telegram_id}",
-                    plan="basic",
-                    subscription_start=now_utc,
-                    subscription_end=now_utc + timedelta(days=trial_days),
+                    plan="free",
                 )
                 session.add(db_user)
                 await session.commit()
