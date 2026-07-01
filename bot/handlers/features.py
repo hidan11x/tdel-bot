@@ -247,6 +247,48 @@ async def cb_news_menu(callback: CallbackQuery):
     await callback.message.edit_text("📰 اختر السوق للأخبار:", reply_markup=builder.as_markup())
 
 
+@router.callback_query(F.data == "mtf_scan")
+async def cb_mtf_scan(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "mtf_scan"}
+    text = (
+        "🔄 تحليل متعدد الفريمات\n\n"
+        "اكتب رمز الأصل (مثال: AAPL، 2222.SR، BTCUSDT):\n"
+        "البوت يفحص 3 فريمات (15min + 1h + 1d) ويعطيك تحليل شامل."
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "vip_signals")
+async def cb_vip_signals(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("🚀 جاري البحث عن أقوى الإشارات...")
+
+    try:
+        from services.scanner import get_top_movers
+        results = await get_top_movers("CRYPTO", count=5)
+        if not results:
+            await callback.message.edit_text("❌ تعذر الحصول على إشارات الآن.", reply_markup=back_button("main_menu"))
+            return
+
+        from services.signal_engine import build_signal
+        lines = ["🚀 إشارات VIP — أقوى الفرص حالياً\n"]
+        for i, r in enumerate(results[:5], 1):
+            signal = build_signal(r)
+            name = signal.name_ar if signal.name_ar != signal.symbol else signal.symbol
+            trend_emoji = {"uptrend": "🟢", "downtrend": "🔴", "sideways": "🟡"}.get(signal.trend, "📊")
+            lines.append(
+                f"{i}. {trend_emoji} {name} ({signal.symbol})\n"
+                f"   ⭐ {signal.score:.0f}/100 | 🎯 ثقة {signal.confidence}/100\n"
+                f"   💰 {signal.current_price:,.4f} | {'+' if signal.change_percent >= 0 else ''}{signal.change_percent:.2f}%\n"
+            )
+
+        lines.append("\nهذا تحليل آلي تعليمي وليس توصية مالية.")
+        await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=back_button("main_menu"))
+    except Exception:
+        await callback.message.edit_text("❌ تعذر الحصول على إشارات.", reply_markup=back_button("main_menu"))
+
+
 @router.callback_query(F.data.startswith("news:"))
 async def cb_news_detail(callback: CallbackQuery):
     await callback.answer()

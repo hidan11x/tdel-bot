@@ -750,6 +750,9 @@ async def handle_text_input(message: Message):
         elif context_type == "price_tracker":
             await handle_price_tracker_input(message)
             return
+        elif context_type == "mtf_scan":
+            await handle_mtf_scan_input(message)
+            return
 
     query = message.text.strip()
     if len(query) < 2:
@@ -800,3 +803,66 @@ async def handle_price_tracker_input(message: Message):
         f"البوت يبعت لك رسالة فورية لما السعر يوصل للهدف.",
         reply_markup=back_button("main_menu"),
     )
+
+
+async def handle_mtf_scan_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "mtf_scan":
+        return
+
+    raw = message.text.strip()
+    _user_context.pop(telegram_id, None)
+
+    from services.search_engine import auto_detect_symbol
+    detected = await auto_detect_symbol(raw)
+
+    if not detected:
+        await message.answer("❌ تعذر التعرف على الرمز.", reply_markup=back_button("main_menu"))
+        return
+
+    symbol = detected["symbol"]
+    market = detected["market"]
+
+    await message.answer(f"🔄 جاري تحليل {symbol} على 3 فريمات...")
+
+    try:
+        from services.scanner import scan_symbol_multi_timeframe
+        from services.signal_engine import build_signal, format_signal_message
+        result = await scan_symbol_multi_timeframe(symbol, market)
+
+        if not result:
+            await message.answer("❌ تعذر الحصول على بيانات كافية.", reply_markup=back_button("main_menu"))
+            return
+
+        from services.symbols_service import get_symbol_info
+        info = await get_symbol_info(symbol, market)
+        name = info["name_ar"] if info else symbol
+        market_label = {"SAUDI": "السعودي", "US": "الأمريكي", "CRYPTO": "الرقمية"}.get(market, market)
+
+        trend_emoji = {"uptrend": "🟢 صاعد", "downtrend": "🔴 هابط", "sideways": "🟡 جانبي", "mixed": "🟠 متضارب"}.get(result.get("trend", ""), "📊")
+        tfs = result.get("timeframes", {})
+        tf_list = ", ".join(tfs.keys()) if tfs else "N/A"
+
+        reason_lines = "\n".join([f"* {r}" for r in result.get("reasons", [])])
+        warning_lines = "\n".join([f"* {w}" for w in result.get("warnings", [])])
+
+        text = (
+            f"🔄 تحليل متعدد الفريمات\n\n"
+            f"🏷 {name}\n"
+            f"🔢 {symbol}\n"
+            f"🌍 السوق {market_label}\n"
+            f"📊 الفريمات: {tf_list}\n"
+            f"🎯 الفريم الأقوى: {result.get('best_timeframe', 'N/A')}\n\n"
+            f"🧭 الاتجاه العام: {trend_emoji}\n"
+            f"⭐ التقييم: {result.get('rating', 'N/A')}\n"
+            f"🎯 الثقة: {result.get('confidence', 0)}/100\n"
+            f"⚠️ المخاطرة: {result.get('risk_level', 'N/A')}\n\n"
+            f"أسباب الإشارة:\n{reason_lines}\n\n"
+            f"تحذيرات:\n{warning_lines}\n\n"
+            f"هذا تحليل آلي تعليمي وليس توصية مالية."
+        )
+
+        await message.answer(text[:4000], reply_markup=back_button("main_menu"))
+    except Exception:
+        await message.answer("❌ حدث خطأ أثناء التحليل.", reply_markup=back_button("main_menu"))
