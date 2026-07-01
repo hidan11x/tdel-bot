@@ -97,16 +97,39 @@ async def cmd_start(message: Message, command=None):
                 await message.answer(f"📤 تحليل مشاركة (مشاهدات: {share_data['views']})\n\n{report[:3500]}")
                 return
 
-    text = (
-        "مرحباً بك في البوت التعليمي لمتابعة الأسواق المالية 🤖\n\n"
-        "هذا البوت يقدم قراءات فنية تعليمية للأسواق:\n"
-        "📈 السوق السعودي\n"
-        "🇺🇸 السوق الأمريكي\n"
-        "₿ العملات الرقمية\n\n"
-        "هام: البوت لا يقدم توصيات شراء أو بيع، المعلومات لأغراض تعليمية فقط.\n\n"
-        "اختر من القائمة أدناه:"
-    )
-    await message.answer(text, reply_markup=main_menu())
+    from config import settings
+    from bot.keyboards.main import subscription_plans, back_button
+
+    is_new = user.plan == "free" and user.subscription_end is None
+
+    if is_new:
+        text = (
+            "مرحباً بك في البوت التعليمي لمتابعة الأسواق المالية 🤖\n\n"
+            "هذا البوت يقدم قراءات فنية تعليمية للأسواق:\n"
+            "📈 السوق السعودي\n"
+            "🇺🇸 السوق الأمريكي\n"
+            "₿ العملات الرقمية\n\n"
+            "💎 خطط الاشتراك:\n\n"
+            f"🥉 Basic — {settings.basic_price:.0f} ريال / شهر\n"
+            f"🥈 Pro — {settings.pro_price:.0f} ريال / شهر\n"
+            f"🥇 VIP — {settings.vip_price:.0f} ريال / شهر\n"
+            f"💎 Lifetime — {settings.lifetime_price:.0f} ريال\n\n"
+            "للاشتراك، تواصل مع الدعم للحصول على كود التفعيل:\n"
+            "👤 @hidanx11\n\n"
+            "أو أدخل كود التفعيل إذا كان لديك:"
+        )
+        builder = InlineKeyboardBuilder()
+        builder.button(text="💳 أدخل كود التفعيل", callback_data="enter_code")
+        builder.button(text="👤 تواصل مع الدعم", callback_data="support")
+        builder.button(text="🏠 الدخول للقائمة", callback_data="main_menu")
+        builder.adjust(1, 1, 1)
+        await message.answer(text, reply_markup=builder.as_markup())
+    else:
+        text = (
+            "مرحباً بك في البوت التعليمي لمتابعة الأسواق المالية 🤖\n\n"
+            "اختر من القائمة أدناه:"
+        )
+        await message.answer(text, reply_markup=main_menu())
 
 
 @router.message(Command("help"))

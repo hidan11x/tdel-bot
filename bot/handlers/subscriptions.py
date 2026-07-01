@@ -137,13 +137,24 @@ async def handle_activation_code(message: Message):
     _user_context.pop(telegram_id, None)
 
     if "بنجاح" in result:
-        plan_name = PLAN_NAMES.get(plan, plan)
         await message.answer(
-            f"✅ {result}\n\nتم ترقية حسابك إلى خطة {plan_name}.",
+            f"✅ {result}\n\nتم تفعيل اشتراكك بنجاح! 🎉",
             reply_markup=main_menu(),
         )
     else:
-        await message.answer(f"❌ {result}", reply_markup=back_button("subscription"))
+        await message.answer(f"❌ {result}\n\nتواصل مع الدعم: @hidanx11", reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "enter_code")
+async def cb_enter_code(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "activation_code", "plan": "any"}
+    text = (
+        "💳 أدخل كود التفعيل الخاص بك:\n\n"
+        "إذا لم يكن لديك كود، تواصل مع الدعم:\n"
+        "👤 @hidanx11"
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 
 
 @router.callback_query(F.data == "activate_trial")
