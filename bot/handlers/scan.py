@@ -1,5 +1,7 @@
+import asyncio
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
+from loguru import logger
 from sqlalchemy import select
 
 from database import get_session
@@ -98,17 +100,23 @@ async def _perform_scan_and_report(
     await callback.message.answer("هل كان هذا التحليل مفيد؟", reply_markup=rating_kb.as_markup())
 
     try:
+        import asyncio as _asyncio
         from services.chart_generator import generate_chart
         from aiogram.types import BufferedInputFile
-        chart_result = generate_chart(symbol, market, timeframe, name=result.get("name_ar"))
+
+        chart_result = await _asyncio.to_thread(
+            generate_chart, symbol, market, timeframe, result.get("name_ar")
+        )
         if chart_result:
             chart_bytes, caption = chart_result
-            photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_{timeframe}.png")
             name = result.get("name_ar") or symbol
             caption_text = f"📉 {name} — {symbol} ({timeframe})"
+            photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_{timeframe}.png")
             await callback.message.answer_photo(photo, caption=caption_text)
-    except Exception:
-        pass
+        else:
+            logger.warning("Chart generation returned None for {} {}", symbol, market)
+    except Exception as e:
+        logger.warning("Chart send failed for {} {}: {}", symbol, market, e)
 
 
 @router.callback_query(F.data.startswith("timeframe_scan:"))

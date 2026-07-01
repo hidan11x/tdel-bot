@@ -300,7 +300,7 @@ def generate_chart(
         fig.savefig(
             buf,
             format="png",
-            dpi=300,
+            dpi=150,
             bbox_inches="tight",
             pad_inches=0.15,
             facecolor="#0d1117",

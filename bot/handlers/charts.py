@@ -62,34 +62,26 @@ async def cb_chart_generate(callback: CallbackQuery):
     await callback.message.edit_text(f"جاري إنشاء الرسم البياني لـ {symbol}... 📊")
 
     try:
-        chart_path = generate_chart(symbol, market, timeframe)
-    except Exception:
-        chart_path = None
-
-    if not chart_path:
-        await callback.message.edit_text(
-            f"❌ تعذر إنشاء الرسم البياني لـ {symbol}. تأكد من صحة الرمز أو حاول بإطار زمني مختلف.",
-            reply_markup=back_button("chart_menu"),
-        )
-        return
-
-    market_key = {"SAUDI": "saudi", "US": "us", "CRYPTO": "crypto"}.get(market, "us")
-    kb = symbol_actions(symbol, market_key)
-
-    caption = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})"
-
-    try:
+        import asyncio
         from services.chart_generator import generate_chart
         from aiogram.types import BufferedInputFile
-        chart_result = generate_chart(symbol, market, timeframe)
+        from loguru import logger
+
+        chart_result = await asyncio.to_thread(
+            generate_chart, symbol, market, timeframe
+        )
+
         if chart_result:
             chart_bytes, chart_caption = chart_result
+            market_key = {"SAUDI": "saudi", "US": "us", "CRYPTO": "crypto"}.get(market, "us")
+            kb = symbol_actions(symbol, market_key)
+            caption = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})"
             photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_{timeframe}.png")
             await callback.message.delete()
             await callback.message.answer_photo(photo, caption=caption, reply_markup=kb)
         else:
             await callback.message.edit_text(
-                f"❌ تعذر إنشاء الرسم البياني لـ {symbol}.",
+                f"❌ تعذر إنشاء الرسم البياني لـ {symbol}. تأكد من صحة الرمز أو حاول بإطار زمني مختلف.",
                 reply_markup=back_button("chart_menu"),
             )
     except Exception:

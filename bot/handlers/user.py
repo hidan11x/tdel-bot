@@ -623,16 +623,21 @@ async def cb_quick_scan_sym(callback: CallbackQuery):
     await callback.message.edit_text(report, reply_markup=kb)
 
     try:
+        import asyncio as _aio
         from services.chart_generator import generate_chart
         from aiogram.types import BufferedInputFile
+        from loguru import logger as _lg
         name = result.get("name_ar") or symbol
-        chart_result = generate_chart(symbol, market, "1d", name=name)
+        chart_result = await _aio.to_thread(generate_chart, symbol, market, "1d", name)
         if chart_result:
             chart_bytes, caption = chart_result
             photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_1d.png")
             await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
-    except Exception:
-        pass
+        else:
+            _lg.warning("Chart returned None for {} {}", symbol, market)
+    except Exception as e:
+        from loguru import logger as _lg
+        _lg.warning("Chart failed for {} {}: {}", symbol, market, e)
 
 
 @router.callback_query(F.data.startswith("quick_chart:"))
@@ -645,13 +650,15 @@ async def cb_quick_chart(callback: CallbackQuery):
     await callback.message.edit_text(f"📈 جاري إنشاء الشارت لـ {symbol}...")
 
     try:
+        import asyncio as _aio
         from services.chart_generator import generate_chart
         from services.symbols_service import get_symbol_info
         from aiogram.types import BufferedInputFile
+        from loguru import logger as _lg
 
         info = await get_symbol_info(symbol, market)
         name = info["name_ar"] if info else symbol
-        chart_result = generate_chart(symbol, market, "1d", name=name)
+        chart_result = await _aio.to_thread(generate_chart, symbol, market, "1d", name)
         if chart_result:
             chart_bytes, caption = chart_result
             photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_1d.png")
