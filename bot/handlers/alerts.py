@@ -94,9 +94,7 @@ async def cb_alert_create(callback: CallbackQuery):
     can = await can_add_alert(user.id)
     if not can:
         await callback.message.edit_text(
-            "🔒 هذه الميزة متاحة للمشتركين فقط.
-
-تواصل مع الدعم: @hidanx11",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم: @hidanx11",
             reply_markup=back_button("my_alerts"),
         )
         return
@@ -159,9 +157,7 @@ async def handle_alert_value_input(message: Message):
     can = await can_add_alert(user.id)
     if not can:
         await message.answer(
-            "🔒 هذه الميزة متاحة للمشتركين فقط.
-
-تواصل مع الدعم: @hidanx11",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم: @hidanx11",
             reply_markup=back_button("my_alerts"),
         )
         _user_context.pop(telegram_id, None)

@@ -98,9 +98,7 @@ async def cb_watch_add(callback: CallbackQuery):
     can = await can_add_watchlist_item(user.id)
     if not can:
         await callback.message.edit_text(
-            "🔒 هذه الميزة متاحة للمشتركين فقط.
-
-تواصل مع الدعم: @hidanx11",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم: @hidanx11",
             reply_markup=back_button("my_watchlist"),
         )
         return
@@ -259,9 +257,7 @@ async def handle_watchlist_symbol_input(message: Message):
     can = await can_add_watchlist_item(user.id)
     if not can:
         await message.answer(
-            "🔒 هذه الميزة متاحة للمشتركين فقط.
-
-تواصل مع الدعم: @hidanx11",
+            "🔒 هذه الميزة متاحة للمشتركين فقط.\n\nتواصل مع الدعم: @hidanx11",
             reply_markup=back_button("my_watchlist"),
         )
         _user_context.pop(telegram_id, None)
