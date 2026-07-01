@@ -75,7 +75,6 @@ class UserCheckMiddleware(BaseMiddleware):
             if bot:
                 username_str = f"@{user.username}" if user.username else "بدون"
                 lang = user.language_code or "غير محدد"
-                mention = user.mention if user.username else user.first_name or str(telegram_id)
 
                 notify_text = (
                     f"👤 مستخدم جديد دخل البوت\n\n"
