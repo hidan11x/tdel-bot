@@ -624,12 +624,13 @@ async def cb_quick_scan_sym(callback: CallbackQuery):
 
     try:
         from services.chart_generator import generate_chart
-        from aiogram.types import FSInputFile
+        from aiogram.types import BufferedInputFile
         name = result.get("name_ar") or symbol
-        chart_path = generate_chart(symbol, market, "1d", name=name)
-        if chart_path:
-            doc = FSInputFile(chart_path)
-            await callback.message.answer_document(doc, caption=f"📉 {name} — {symbol}\nافتح الملف في المتصفح")
+        chart_result = generate_chart(symbol, market, "1d", name=name)
+        if chart_result:
+            chart_bytes, caption = chart_result
+            photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_1d.png")
+            await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
     except Exception:
         pass
 
@@ -646,14 +647,15 @@ async def cb_quick_chart(callback: CallbackQuery):
     try:
         from services.chart_generator import generate_chart
         from services.symbols_service import get_symbol_info
-        from aiogram.types import FSInputFile
+        from aiogram.types import BufferedInputFile
 
         info = await get_symbol_info(symbol, market)
         name = info["name_ar"] if info else symbol
-        chart_path = generate_chart(symbol, market, "1d", name=name)
-        if chart_path:
-            doc = FSInputFile(chart_path)
-            await callback.message.answer_document(doc, caption=f"📉 {name} — {symbol}\nافتح الملف في المتصفح")
+        chart_result = generate_chart(symbol, market, "1d", name=name)
+        if chart_result:
+            chart_bytes, caption = chart_result
+            photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_1d.png")
+            await callback.message.answer_photo(photo, caption=f"📉 {name} — {symbol}")
             await callback.message.edit_text(f"📈 شارت {name} — {symbol}", reply_markup=back_button("main_menu"))
         else:
             await callback.message.edit_text(

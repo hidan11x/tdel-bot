@@ -146,6 +146,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         ("📈 الأسواق", "admin_markets"),
         ("🔣 الرموز", "admin_symbols"),
         ("📋 المؤشرات", "admin_indicators"),
+        ("💾 نسخة احتياطية", "admin_backup"),
         ("📜 السجلات", "admin_logs"),
         ("🔧 الصيانة", "admin_maintenance"),
         ("↩️ رجوع", "main_menu"),

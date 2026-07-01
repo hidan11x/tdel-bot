@@ -91,12 +91,15 @@ async def _perform_scan_and_report(
     await callback.message.edit_text(report, reply_markup=kb)
 
     try:
-        chart_path = generate_chart(symbol, market, timeframe, name=result.get("name_ar"))
-        if chart_path:
-            doc = FSInputFile(chart_path)
+        from services.chart_generator import generate_chart
+        from aiogram.types import BufferedInputFile
+        chart_result = generate_chart(symbol, market, timeframe, name=result.get("name_ar"))
+        if chart_result:
+            chart_bytes, caption = chart_result
+            photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_{timeframe}.png")
             name = result.get("name_ar") or symbol
-            caption_text = f"📉 {name} — {symbol} ({timeframe})\nافتح الملف في المتصفح لرؤية الشارت التفاعلي"
-            await callback.message.answer_document(doc, caption=caption_text)
+            caption_text = f"📉 {name} — {symbol} ({timeframe})"
+            await callback.message.answer_photo(photo, caption=caption_text)
     except Exception:
         pass
 

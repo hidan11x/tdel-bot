@@ -145,6 +145,8 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_code_disable(cq, int(data.split(":")[1]))
     elif data == "admin_indicators":
         await _admin_indicators(cq)
+    elif data == "admin_backup":
+        await _admin_backup(cq)
     elif data == "admin_coupons":
         await _admin_coupons_menu(cq)
     elif data.startswith("admin_coupon_disable:"):
@@ -661,6 +663,53 @@ async def _admin_indicators(cq: CallbackQuery):
     )
     await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
     await cq.answer()
+
+
+async def _admin_backup(cq: CallbackQuery):
+    import csv
+    import io
+    from aiogram.types import BufferedInputFile
+
+    try:
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        writer.writerow(["Type", "ID", "Telegram ID", "Username", "Name", "Plan", "Sub Start", "Sub End", "Active", "Banned", "Scans Today", "Referrals"])
+
+        async with get_session() as session:
+            result = await session.execute(select(User).order_by(User.id))
+            users = result.scalars().all()
+
+            for u in users:
+                writer.writerow([
+                    "USER", u.id, u.telegram_id, u.username or "",
+                    u.first_name or "", u.plan,
+                    str(u.subscription_start) if u.subscription_start else "",
+                    str(u.subscription_end) if u.subscription_end else "",
+                    u.is_active, u.is_banned, u.scans_today,
+                    getattr(u, 'referrals_count', 0) or 0,
+                ])
+
+            result = await session.execute(select(ActivationCode).order_by(ActivationCode.id.desc()))
+            codes = result.scalars().all()
+
+            for c in codes:
+                writer.writerow([
+                    "CODE", c.id, "", "", "", c.plan,
+                    "", "", c.is_active, "", c.uses, c.max_uses,
+                ])
+
+        csv_data = output.getvalue()
+        buf = io.BytesIO(csv_data.encode("utf-8-sig"))
+        buf.seek(0)
+
+        doc = BufferedInputFile(buf.read(), filename=f"backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.csv")
+
+        await cq.message.answer_document(doc, caption=f"💾 نسخة احتياطية\nالمستخدمين: {len(users)}\nالأكواد: {len(codes)}")
+        await cq.answer("✅ تم إنشاء النسخة الاحتياطية", show_alert=True)
+
+    except Exception as e:
+        await cq.answer(f"❌ خطأ: {str(e)[:100]}", show_alert=True)
 
 
 async def _admin_coupons_menu(cq: CallbackQuery):

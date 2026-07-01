@@ -28,23 +28,19 @@ async def startup():
     logger.info("Config validated")
 
     from database import init_db, engine
-    from models import Base
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        logger.info("Dropped old tables (fresh schema)")
     await init_db()
-    logger.info("Database initialized")
+    logger.info("Database initialized (data preserved)")
 
     try:
         import subprocess
         subprocess.run([sys.executable, "seed.py"], check=False, timeout=60)
-        logger.info("Seed data inserted")
+        logger.info("Seed data checked (existing data preserved)")
     except Exception as e:
-        logger.warning("Seed skipped (may already exist): {}", e)
+        logger.warning("Seed skipped: {}", e)
 
     try:
         subprocess.run([sys.executable, "seed_aliases.py"], check=False, timeout=60)
-        logger.info("Aliases seeded")
+        logger.info("Aliases checked")
     except Exception as e:
         logger.warning("Aliases seed skipped: {}", e)
 
