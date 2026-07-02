@@ -69,42 +69,36 @@ def _fmt_change(change: float) -> str:
 
 
 def _rtl(text: str) -> str:
-    try:
-        import arabic_reshaper
-        from bidi.algorithm import get_display
-
-        return get_display(arabic_reshaper.reshape(str(text)))
-    except Exception:
-        return str(text)
+    return str(text)
 
 
 def _score_label(score: float) -> str:
     if score >= 80:
-        return "قوي"
+        return "Strong"
     if score >= 65:
-        return "جيد"
+        return "Good"
     if score >= 50:
-        return "متوسط"
-    return "ضعيف"
+        return "Medium"
+    return "Weak"
 
 
 def _trend_ar(trend: str) -> str:
     return {
-        "uptrend": "صاعد",
-        "downtrend": "هابط",
-        "sideways": "جانبي",
-    }.get(str(trend).lower(), "جانبي")
+        "uptrend": "Up",
+        "downtrend": "Down",
+        "sideways": "Sideways",
+    }.get(str(trend).lower(), "Sideways")
 
 
 def _risk_ar(risk: str) -> str:
     if not risk:
-        return "متوسط"
+        return "Medium"
     text = str(risk)
     if "low" in text.lower() or "منخفض" in text:
-        return "منخفض"
+        return "Low"
     if "high" in text.lower() or "مرتفع" in text or "عالي" in text:
-        return "مرتفع"
-    return "متوسط"
+        return "High"
+    return "Medium"
 
 
 def _add_chip(ax, x: float, y: float, label: str, value: str, color: str) -> None:
@@ -243,7 +237,7 @@ def generate_chart(
         avg_vol_20 = vol_series.rolling(20).mean().iloc[-1] if len(vol_series) >= 20 else vol_series.mean()
         current_vol = vol_series.iloc[-1] if len(vol_series) > 0 else 0
         vol_ratio = current_vol / avg_vol_20 if avg_vol_20 and avg_vol_20 > 0 else 0
-        vol_status = "مرتفع" if vol_ratio > 1.5 else "طبيعي"
+        vol_status = "High" if vol_ratio > 1.5 else "Normal"
 
         vol_colors = []
         for i in range(len(df)):
@@ -378,15 +372,15 @@ def generate_chart(
         )
 
         score_color = "#22C55E" if score_value >= 70 else ("#FACC15" if score_value >= 50 else "#EF4444")
-        _add_chip(price_ax, 0.13, 1.075, "السعر", _fmt_price(current_price), "#38BDF8")
-        _add_chip(price_ax, 0.33, 1.075, "التغير", _fmt_change(change_pct), change_color)
-        _add_chip(price_ax, 0.53, 1.075, "السكور", f"{score_value:.0f}/100 {_score_label(score_value)}", score_color)
-        _add_chip(price_ax, 0.73, 1.075, "المخاطرة", risk_label, "#F59E0B")
-        _add_chip(price_ax, 0.91, 1.075, "الاتجاه", trend_text, "#A78BFA")
+        _add_chip(price_ax, 0.13, 1.075, "Price", _fmt_price(current_price), "#38BDF8")
+        _add_chip(price_ax, 0.33, 1.075, "Change", _fmt_change(change_pct), change_color)
+        _add_chip(price_ax, 0.53, 1.075, "Score", f"{score_value:.0f}/100 {_score_label(score_value)}", score_color)
+        _add_chip(price_ax, 0.73, 1.075, "Risk", risk_label, "#F59E0B")
+        _add_chip(price_ax, 0.91, 1.075, "Trend", trend_text, "#A78BFA")
 
         if support is not None and support > 0 and current_price > 0:
             s_dist = ((current_price - support) / current_price) * 100
-            s_text = f"دعم {_fmt_price(support)} ({s_dist:+.1f}%)"
+            s_text = f"Support {_fmt_price(support)} ({s_dist:+.1f}%)"
             price_ax.text(
                 0.99, 0.02, _rtl(s_text),
                 color="#66BB6A", fontsize=9, fontweight="bold",
@@ -396,7 +390,7 @@ def generate_chart(
 
         if resistance is not None and resistance > 0 and current_price > 0:
             r_dist = ((resistance - current_price) / current_price) * 100
-            r_text = f"مقاومة {_fmt_price(resistance)} ({r_dist:+.1f}%)"
+            r_text = f"Resistance {_fmt_price(resistance)} ({r_dist:+.1f}%)"
             price_ax.text(
                 0.99, 0.08, _rtl(r_text),
                 color="#EF5350", fontsize=9, fontweight="bold",
@@ -411,19 +405,19 @@ def generate_chart(
             price_range = max(float(df["High"].max() - df["Low"].min()), current_price * 0.02)
             trend = str(indicators.get("trend") or "sideways").lower()
             if trend == "uptrend" and score_value >= 55:
-                marker_text = "شراء مراقبة"
+                marker_text = "Watch Buy"
                 marker_color = "#22C55E"
                 y_point = last_low
                 y_text = last_low - price_range * 0.11
                 va = "top"
             elif trend == "downtrend" and score_value < 60:
-                marker_text = "بيع مراقبة"
+                marker_text = "Watch Sell"
                 marker_color = "#EF4444"
                 y_point = last_high
                 y_text = last_high + price_range * 0.11
                 va = "bottom"
             else:
-                marker_text = "مراقبة"
+                marker_text = "Watch"
                 marker_color = "#FACC15"
                 y_point = current_price
                 y_text = current_price + price_range * 0.10
@@ -454,15 +448,15 @@ def generate_chart(
         summary_lines = [
             f"EMA20 {_fmt_price(ema20_val)}",
             f"EMA50 {_fmt_price(ema50_val)}",
-            f"الدعم {_fmt_price(support)}",
-            f"المقاومة {_fmt_price(resistance)}",
-            f"الحجم {vol_status} {vol_ratio:.1f}x",
+            f"Support {_fmt_price(support)}",
+            f"Resistance {_fmt_price(resistance)}",
+            f"Volume {vol_status} {vol_ratio:.1f}x",
         ]
 
         if bb_upper_val and not np.isnan(bb_upper_val):
-            summary_lines.append(f"بولنجر علوي {_fmt_price(float(bb_upper_val))}")
+            summary_lines.append(f"BB Upper {_fmt_price(float(bb_upper_val))}")
         if bb_lower_val and not np.isnan(bb_lower_val):
-            summary_lines.append(f"بولنجر سفلي {_fmt_price(float(bb_lower_val))}")
+            summary_lines.append(f"BB Lower {_fmt_price(float(bb_lower_val))}")
 
         summary_text = "  |  ".join(summary_lines[:5])
         price_ax.text(
@@ -492,7 +486,7 @@ def generate_chart(
             pass
 
         if volume_ax is not None:
-            volume_ax.set_ylabel(_rtl("الحجم"), color="#94A3B8", fontsize=8)
+            volume_ax.set_ylabel("Volume", color="#94A3B8", fontsize=8)
             if avg_vol_20 and avg_vol_20 > 0:
                 volume_ax.axhline(y=avg_vol_20, color="#94A3B8", linestyle="--", linewidth=0.8, alpha=0.55)
                 volume_ax.text(
@@ -521,7 +515,7 @@ def generate_chart(
         fig.text(
             0.985,
             0.012,
-            _rtl("قراءة آلية تعليمية وليست توصية مالية"),
+            "Automated educational reading, not financial advice",
             ha="right",
             va="bottom",
             color="#64748B",
