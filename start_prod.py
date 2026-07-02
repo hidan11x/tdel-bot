@@ -27,6 +27,14 @@ async def startup():
     settings.validate()
     logger.info("Config validated")
 
+    dashboard_runner = None
+    try:
+        from webapp.dashboard import start_dashboard_server
+
+        dashboard_runner = await start_dashboard_server()
+    except Exception as e:
+        logger.exception("Dashboard server failed to start: {}", e)
+
     from database import init_db, engine
     await init_db()
     logger.info("Database initialized (data preserved)")
@@ -79,14 +87,6 @@ async def startup():
     scheduler = ReportScheduler(bot)
     scheduler.start()
     await setup_bot_commands(bot)
-
-    dashboard_runner = None
-    try:
-        from webapp.dashboard import start_dashboard_server
-
-        dashboard_runner = await start_dashboard_server()
-    except Exception as e:
-        logger.warning("Dashboard server skipped: {}", e)
 
     from contextlib import suppress
     for admin_id in settings.admin_ids:
