@@ -14,6 +14,7 @@ from bot.keyboards.main import (
 )
 from utils.formatter import format_profile, format_technical_report
 from services.subscriptions import get_plan_limits
+from services.dashboard_auth import dashboard_url
 from services.scanner import scan_symbol, TOP_SYMBOLS
 from services.signal_engine import build_signal, format_signal_message
 from services.symbols_service import (
@@ -199,6 +200,33 @@ async def cmd_whoami(message: Message):
     await message.answer(text, reply_markup=back_button("main_menu"))
 
 
+async def _send_dashboard_link(message: Message, telegram_id: int, plan: str):
+    is_admin = telegram_id in settings.admin_ids
+    if not is_admin and plan not in ("vip", "lifetime"):
+        await message.answer(
+            "🌐 لوحة VIP متاحة لمشتركي VIP فقط.\n\nإذا فعلت اشتراكك قريباً، اضغط /start ثم جرّب مرة ثانية.",
+            reply_markup=back_button("subscription"),
+        )
+        return
+
+    link = dashboard_url(telegram_id)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌐 فتح لوحة VIP", url=link)
+    builder.button(text="↩️ رجوع", callback_data="menu:account")
+    builder.adjust(1)
+    await message.answer(
+        "🌐 رابط لوحة VIP الخاصة بك جاهز.\n\nافتحه من Safari أو أي متصفح. الرابط خاص بحسابك، لا تشاركه مع أحد.",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.message(Command("dashboard"))
+async def cmd_dashboard(message: Message):
+    user = await _get_user(message.from_user.id)
+    plan = user.plan if user else "free"
+    await _send_dashboard_link(message, message.from_user.id, plan)
+
+
 @router.callback_query(F.data == "daily_reports")
 async def cb_daily_reports(callback: CallbackQuery):
     await callback.answer()
@@ -359,6 +387,31 @@ async def cb_section_menu(callback: CallbackQuery):
     }
     text = titles.get(section, "القائمة")
     await callback.message.edit_text(text, reply_markup=section_menu(section, plan))
+
+
+@router.callback_query(F.data == "vip_dashboard")
+async def cb_vip_dashboard(callback: CallbackQuery):
+    await callback.answer()
+    user = await _get_user(callback.from_user.id)
+    plan = user.plan if user else "free"
+
+    is_admin = callback.from_user.id in settings.admin_ids
+    if not is_admin and plan not in ("vip", "lifetime"):
+        await callback.message.edit_text(
+            "🌐 لوحة VIP متاحة لمشتركي VIP فقط.\n\nفعّل VIP ثم ارجع هنا وبتلقى رابطك الخاص.",
+            reply_markup=back_button("subscription"),
+        )
+        return
+
+    link = dashboard_url(callback.from_user.id)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌐 فتح لوحة VIP", url=link)
+    builder.button(text="↩️ رجوع", callback_data="menu:account")
+    builder.adjust(1)
+    await callback.message.edit_text(
+        "🌐 رابط لوحة VIP الخاصة بك جاهز.\n\nيفتح على Safari والجوال، والرابط مربوط بحسابك.",
+        reply_markup=builder.as_markup(),
+    )
 
 
 @router.callback_query(F.data.in_({"market:saudi", "market:us", "market:crypto"}))

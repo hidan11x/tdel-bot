@@ -129,6 +129,7 @@ def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
             ("💪 مقارنة القوة", "rs_compare"),
         ],
         "account": [
+            ("🌐 لوحة VIP", "vip_dashboard"),
             ("👤 حسابي", "my_profile"),
             ("💳 الاشتراك", "subscription"),
             ("🎫 تذكرة دعم", "support_ticket"),

@@ -61,6 +61,7 @@ Set these environment variables in Railway:
 - `ADMIN_IDS`
 - `DATABASE_URL`
 - `MARKET_TIMEZONE=Asia/Riyadh`
+- `DASHBOARD_BASE_URL` public Railway URL for VIP dashboard links, if `RAILWAY_PUBLIC_DOMAIN` is not available
 
 ## Symbol lists
 Edit:

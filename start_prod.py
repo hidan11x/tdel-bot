@@ -80,6 +80,14 @@ async def startup():
     scheduler.start()
     await setup_bot_commands(bot)
 
+    dashboard_runner = None
+    try:
+        from webapp.dashboard import start_dashboard_server
+
+        dashboard_runner = await start_dashboard_server()
+    except Exception as e:
+        logger.warning("Dashboard server skipped: {}", e)
+
     from contextlib import suppress
     for admin_id in settings.admin_ids:
         with suppress(Exception):
@@ -89,6 +97,8 @@ async def startup():
     try:
         await dp.start_polling(bot)
     finally:
+        if dashboard_runner:
+            await dashboard_runner.cleanup()
         await scheduler.stop()
         await bot.session.close()
         await engine.dispose()
