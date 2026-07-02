@@ -40,7 +40,10 @@ _WATCHLIST_DEDUP_MEMORY: Dict[str, datetime] = {}
 class ReportScheduler:
     def __init__(self, bot):
         self.bot = bot
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+    def _cron(self, hour: int, minute: int) -> CronTrigger:
+        return CronTrigger(hour=hour % 24, minute=minute, timezone=settings.timezone)
 
     def start(self):
         saudi_h, saudi_m = map(int, settings.saudi_open.split(":"))
@@ -48,31 +51,31 @@ class ReportScheduler:
 
         self.scheduler.add_job(
             self.send_daily_saudi_report,
-            CronTrigger(hour=saudi_h - 1, minute=saudi_m),
+            self._cron(saudi_h - 1, saudi_m),
             id="saudi_daily",
             replace_existing=True,
         )
         self.scheduler.add_job(
             self.send_daily_us_report,
-            CronTrigger(hour=us_h - 1, minute=us_m),
+            self._cron(us_h - 1, us_m),
             id="us_daily",
             replace_existing=True,
         )
         self.scheduler.add_job(
             self.send_daily_crypto_report,
-            CronTrigger(hour=7, minute=0),
+            self._cron(7, 0),
             id="crypto_daily",
             replace_existing=True,
         )
         self.scheduler.add_job(
             self.check_expired_subscriptions,
-            CronTrigger(hour=0, minute=0),
+            self._cron(0, 0),
             id="sub_check",
             replace_existing=True,
         )
         self.scheduler.add_job(
             self.check_subscription_expiry_warning,
-            CronTrigger(hour=10, minute=0),
+            self._cron(10, 0),
             id="sub_expiry_warning",
             replace_existing=True,
         )
@@ -99,7 +102,7 @@ class ReportScheduler:
         )
         self.scheduler.add_job(
             self.send_daily_market_summary,
-            CronTrigger(hour=7, minute=0),
+            self._cron(7, 0),
             id="daily_summary",
             replace_existing=True,
         )
@@ -149,7 +152,7 @@ class ReportScheduler:
                 continue
         if not reports:
             return None
-        header = f"📊 التقرير اليومي - السوق {name}\n{datetime.now().strftime('%Y-%m-%d')}\n\n"
+        header = f"📊 التقرير اليومي - السوق {name}\n{settings.now().strftime('%Y-%m-%d')}\n\n"
         return header + "\n---\n".join(reports[:3])
 
     async def _send_market_report(self, market: str):

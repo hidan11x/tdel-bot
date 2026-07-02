@@ -15,6 +15,7 @@ from models import User, ActivationCode, Coupon, AdminLog, Payment, ErrorLog, Ma
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.keyboards import admin_menu, admin_users_actions, back_button, main_menu
+from services.health import build_admin_health_report
 from services.symbols_service import (
     get_all_symbols_admin, toggle_symbol_active, toggle_symbol_popular,
     get_symbol_by_id, update_symbol, add_symbol,
@@ -67,6 +68,14 @@ async def cmd_admin(msg: Message, state: FSMContext = None):
     if state:
         await state.clear()
     await msg.answer("🔧 لوحة التحكم", reply_markup=admin_menu())
+
+
+@router.message(Command("health"))
+async def cmd_health(msg: Message):
+    if not is_admin(msg.from_user.id):
+        return await msg.reply("⛔ غير مصرح لك بهذا الأمر.")
+    text = await build_admin_health_report()
+    await msg.answer(text, reply_markup=back_button("admin_panel"))
 
 
 @router.callback_query(F.data == "admin_panel")
@@ -359,7 +368,7 @@ async def _admin_code_disable(cq: CallbackQuery, code_id: int):
 
 async def _admin_stats(cq: CallbackQuery):
     async with get_session() as session:
-        today = datetime.now(timezone.utc).date()
+        today = settings.today()
         scans_today = (await session.execute(
             select(func.count()).select_from(ScanLog).where(func.date(ScanLog.created_at) == today)
         )).scalar() or 0
@@ -380,35 +389,7 @@ async def _admin_stats(cq: CallbackQuery):
 
 
 async def _admin_health(cq: CallbackQuery):
-    import time, importlib
-    checks = []
-    db_ok = False
-    try:
-        async with get_session() as session:
-            await session.execute(select(func.count(User.id)))
-            db_ok = True
-    except Exception as e:
-        checks.append(f"❌ قاعدة البيانات: {e}")
-    if db_ok:
-        checks.append("✅ قاعدة البيانات: متصلة")
-    try:
-        import yfinance
-        checks.append(f"✅ yfinance: {yfinance.__version__}")
-    except Exception:
-        checks.append("❌ yfinance: غير مثبت")
-    try:
-        import binance
-        checks.append(f"✅ Binance: {binance.__version__}")
-    except Exception:
-        checks.append("⚠️ Binance: غير مثبت")
-    try:
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-        checks.append("✅ APScheduler: متاح")
-    except Exception:
-        checks.append("❌ APScheduler: غير مثبت")
-    import sys
-    checks.append(f"🐍 Python: {sys.version.split()[0]}")
-    text = "🩺 **صحة النظام**\n\n" + "\n".join(checks)
+    text = await build_admin_health_report()
     await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
     await cq.answer()
 

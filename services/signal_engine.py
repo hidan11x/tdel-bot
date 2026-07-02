@@ -262,16 +262,48 @@ def _display_name(signal: SmartSignal) -> str:
     return signal.symbol
 
 
+def _risk_is_high(risk_level: str) -> bool:
+    value = (risk_level or "").strip()
+    return value in ("مرتفع", "عالي", "عالي جداً", "عالي جدا")
+
+
+def _decision_label(signal: SmartSignal) -> str:
+    trend = (signal.trend or "").lower()
+    high_risk = _risk_is_high(signal.risk_level)
+
+    if high_risk and signal.confidence < 75:
+        return "مخاطرة مرتفعة: الأفضل الانتظار أو تقليل حجم الصفقة."
+    if trend == "downtrend":
+        return "اتجاه هابط: مناسب للمتابعة فقط حتى تظهر إشارة انعكاس."
+    if signal.confidence >= 75 and signal.score >= 70 and trend == "uptrend" and not high_risk:
+        return "مراقبة إيجابية: القراءة قوية، لكن القرار يحتاج تأكيد من خطتك."
+    if signal.confidence >= 60 and signal.score >= 55:
+        return "مراقبة بحذر: القراءة مقبولة وتحتاج تأكيد إضافي."
+    return "انتظار: الإشارة غير كافية حالياً."
+
+
+def _confidence_label(confidence: int) -> str:
+    if confidence >= 75:
+        return "عالية"
+    if confidence >= 60:
+        return "متوسطة"
+    if confidence >= 45:
+        return "ضعيفة"
+    return "منخفضة جداً"
+
+
 def format_signal_message(signal: SmartSignal) -> str:
     reasons = signal.reasons or ["لا توجد اسباب كافية حالياً."]
     warnings = signal.warnings or ["لا توجد تحذيرات خاصة حالياً."]
 
-    reason_lines = "\n".join([f"* {r}" for r in reasons])
-    warning_lines = "\n".join([f"* {w}" for w in warnings])
+    reason_lines = "\n".join([f"• {r}" for r in reasons[:5]])
+    warning_lines = "\n".join([f"• {w}" for w in warnings[:5]])
 
     name = _display_name(signal)
     market_label = _market_label(signal.market)
     tf_label = _timeframe_label(signal.timeframe)
+    decision = _decision_label(signal)
+    confidence_label = _confidence_label(signal.confidence)
 
     sector_line = f"🏢 القطاع: {signal.sector}\n" if signal.sector else ""
 
@@ -295,6 +327,7 @@ def format_signal_message(signal: SmartSignal) -> str:
 
     return (
         f"📊 قراءة فنية تعليمية\n\n"
+        f"الخلاصة: {decision}\n\n"
         f"🏷 الأصل: {name}\n"
         f"🔢 الرمز: {signal.symbol}\n"
         f"🌍 السوق: {market_label}\n"
@@ -304,14 +337,14 @@ def format_signal_message(signal: SmartSignal) -> str:
         f"📈 التغير: {_format_change(signal.change_percent)}\n\n"
         f"🧭 الاتجاه: {_trend_label(signal.trend)}\n"
         f"⭐ التقييم: {signal.rating} ({signal.score:.0f}/100)\n"
-        f"🎯 الثقة: {signal.confidence}/100\n"
+        f"🎯 الثقة: {signal.confidence}/100 ({confidence_label})\n"
         f"⚠️ المخاطرة: {signal.risk_level}\n"
         f"{extra_indicators}"
         f"\n🟢 الدعم: {_format_price(signal.support)}\n"
         f"🔴 المقاومة: {_format_price(signal.resistance)}\n\n"
-        f"أسباب الاشارة:\n"
+        f"أسباب القراءة:\n"
         f"{reason_lines}\n\n"
-        f"تحذيرات:\n"
+        f"نقاط انتباه:\n"
         f"{warning_lines}\n\n"
         f"{signal.summary}\n\n"
         f"هذا تحليل آلي تعليمي وليس توصية مالية."

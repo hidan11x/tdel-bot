@@ -1,6 +1,6 @@
 import asyncio
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 
 import pandas as pd
 from loguru import logger
@@ -217,7 +217,7 @@ async def log_scan_to_db(user_id: int, symbol: str, market: str, timeframe: str,
         )
         session.add(scan_log)
 
-        today = date.today()
+        today = settings.today()
         stmt = select(DailyUsage).where(
             DailyUsage.user_id == user_id,
             DailyUsage.date == today,

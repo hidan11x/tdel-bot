@@ -1,11 +1,12 @@
 import asyncio
 from typing import Optional, Dict, List
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from loguru import logger
 from sqlalchemy import select, func
 
 from database import get_session
 from models import User, ScanLog, Watchlist, Alert, PriceTracker
+from config import settings
 
 
 async def get_user_statistics(user_id: int) -> Optional[str]:
@@ -121,7 +122,7 @@ SAUDI_DIVIDENDS_2026 = [
 
 async def get_dividend_schedule() -> str:
     try:
-        now = date.today()
+        now = settings.today()
         lines = ["📅 جدول توزيعات الأرباح القادمة\n\n"]
 
         upcoming = []

@@ -8,10 +8,10 @@ from loguru import logger
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
 
 from config import settings
 from database import init_db, engine
+from bot.commands import setup_bot_commands
 from bot.handlers import (
     user_router,
     scan_router,
@@ -49,18 +49,7 @@ async def on_startup(bot: Bot) -> None:
                 "✅ Bot started. النظام يعمل بنجاح.",
             )
 
-    commands = [
-        BotCommand(command="start", description="🏠 القائمة الرئيسية"),
-        BotCommand(command="help", description="📋 المساعدة"),
-        BotCommand(command="status", description="📊 حالة البوت"),
-        BotCommand(command="profile", description="👤 حسابي"),
-        BotCommand(command="plans", description="💳 الخطط"),
-        BotCommand(command="subscribe", description="💰 الاشتراك"),
-        BotCommand(command="daily", description="📅 التقرير اليومي"),
-        BotCommand(command="scan", description="📊 فحص سريع"),
-        BotCommand(command="support", description="🛠 الدعم"),
-    ]
-    await bot.set_my_commands(commands)
+    await setup_bot_commands(bot)
 
 
 async def on_shutdown(bot: Bot) -> None:

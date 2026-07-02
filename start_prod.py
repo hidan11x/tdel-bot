@@ -48,6 +48,7 @@ async def startup():
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
 
+    from bot.commands import setup_bot_commands
     from bot.handlers import (
         user_router, scan_router, watchlist_router, alerts_router,
         charts_router, subscriptions_router, top_router, admin_router,
@@ -77,6 +78,7 @@ async def startup():
 
     scheduler = ReportScheduler(bot)
     scheduler.start()
+    await setup_bot_commands(bot)
 
     from contextlib import suppress
     for admin_id in settings.admin_ids:

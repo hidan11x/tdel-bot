@@ -1,5 +1,5 @@
 from typing import Dict, Optional, List
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, and_, update
 
@@ -55,7 +55,7 @@ async def can_scan(user_id: int) -> bool:
         if daily_limit == -1:
             return True
 
-        today = date.today()
+        today = settings.today()
         if user.last_scan_date != today:
             return True
 
@@ -67,7 +67,7 @@ async def increment_scan(user_id: int) -> None:
         user = await session.get(User, user_id)
         if not user:
             return
-        today = date.today()
+        today = settings.today()
         user.scans_today = (user.scans_today if user.last_scan_date == today else 0) + 1
         user.last_scan_date = today
 

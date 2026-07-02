@@ -1,6 +1,8 @@
 import os
+from datetime import date, datetime
 from dataclasses import dataclass, field
 from typing import List
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,6 +44,7 @@ class Settings:
     saudi_close: str = field(default_factory=lambda: _env("SAUDI_MARKET_CLOSE", "15:00"))
     us_open: str = field(default_factory=lambda: _env("US_MARKET_OPEN", "15:30"))
     us_close: str = field(default_factory=lambda: _env("US_MARKET_CLOSE", "22:00"))
+    market_timezone: str = field(default_factory=lambda: _env("MARKET_TIMEZONE", "Asia/Riyadh"))
 
     free_scans_daily: int = field(default_factory=lambda: _int("FREE_SCANS_DAILY", 0))
     free_alerts: int = field(default_factory=lambda: _int("FREE_ALERTS", 0))
@@ -64,6 +67,19 @@ class Settings:
 
     chart_theme: str = field(default_factory=lambda: _env("CHART_THEME", "dark"))
 
+    @property
+    def timezone(self) -> ZoneInfo:
+        try:
+            return ZoneInfo(self.market_timezone)
+        except ZoneInfoNotFoundError:
+            return ZoneInfo("UTC")
+
+    def now(self) -> datetime:
+        return datetime.now(self.timezone)
+
+    def today(self) -> date:
+        return self.now().date()
+
     def validate(self) -> None:
         if not self.bot_token:
             raise ValueError(
@@ -73,6 +89,12 @@ class Settings:
             raise ValueError(
                 "DATABASE_URL is not set. Check your .env file."
             )
+        try:
+            ZoneInfo(self.market_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                f"MARKET_TIMEZONE is invalid: {self.market_timezone}"
+            ) from exc
 
 
 settings = Settings()

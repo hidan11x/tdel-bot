@@ -50,6 +50,18 @@ python scanner.py
 python main.py
 ```
 
+## Railway deployment
+Railway uses `nixpacks.toml`, which starts the bot with:
+```cmd
+python start_prod.py
+```
+
+Set these environment variables in Railway:
+- `BOT_TOKEN`
+- `ADMIN_IDS`
+- `DATABASE_URL`
+- `MARKET_TIMEZONE=Asia/Riyadh`
+
 ## Symbol lists
 Edit:
 - `symbols_us.txt`

@@ -83,8 +83,7 @@ class YahooFinanceProvider:
 
     @staticmethod
     def get_market_status() -> dict:
-        import datetime
-        now = datetime.datetime.now()
+        now = settings.now()
         hour = now.hour
         minute = now.minute
         current = hour * 60 + minute

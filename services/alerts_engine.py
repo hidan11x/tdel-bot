@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
 from loguru import logger
@@ -112,7 +112,7 @@ async def check_alerts() -> List[Dict[str, Any]]:
                     if alert_obj:
                         alert_obj.triggered = True
                         alert_obj.triggered_at = now_dt
-                    today = date.today()
+                    today = settings.today()
                     dq = select(DailyUsage).where(
                         DailyUsage.user_id == alert.user_id,
                         DailyUsage.date == today,
