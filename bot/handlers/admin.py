@@ -179,6 +179,23 @@ async def cmd_health(msg: Message):
     await msg.answer(text, reply_markup=back_button("admin_panel"))
 
 
+@router.message(Command("sync_symbols"))
+async def cmd_sync_symbols(msg: Message):
+    if not is_admin(msg.from_user.id):
+        return await msg.reply("⛔ غير مصرح لك بهذا الأمر.")
+    notice = await msg.answer("🌍 جاري تحديث رموز الأمريكي والكريبتو...")
+    try:
+        from services.symbol_sync import sync_symbol_universe
+
+        results = await sync_symbol_universe()
+        lines = ["✅ تم تحديث الرموز"]
+        for item in results:
+            lines.append(f"{item['market']}: تم جلب {item['fetched']} | جديد {item['added']}")
+        await notice.edit_text("\n".join(lines), reply_markup=back_button("admin_panel"))
+    except Exception as exc:
+        await notice.edit_text(f"❌ تعذر تحديث الرموز:\n{str(exc)[:500]}", reply_markup=back_button("admin_panel"))
+
+
 @router.callback_query(F.data == "admin_panel")
 async def cb_admin_panel(cq: CallbackQuery):
     if not is_admin(cq.from_user.id):

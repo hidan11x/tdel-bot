@@ -11,7 +11,18 @@ from sqlalchemy.exc import IntegrityError
 
 from config import settings
 from database import get_session
-from models import Alert, ErrorLog, PortfolioPosition, SavedOpportunity, ScanLog, Symbol, User, Watchlist
+from models import (
+    AffiliateCommission,
+    AffiliatePartner,
+    Alert,
+    ErrorLog,
+    PortfolioPosition,
+    SavedOpportunity,
+    ScanLog,
+    Symbol,
+    User,
+    Watchlist,
+)
 from services.dashboard_auth import verify_dashboard_token
 from services.market_data import YahooFinanceProvider, get_current_price_sync, get_ohlcv
 from services.scanner import TOP_SYMBOLS
@@ -724,6 +735,80 @@ async def dashboard_ai_action(request: web.Request) -> web.Response:
         return _json({"ok": False, "message": "تعذر تشغيل مساعد الذكاء حالياً"}, status=500)
 
 
+async def dashboard_affiliates(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+    if user.telegram_id not in settings.admin_ids:
+        return _json({"ok": False, "message": "هذه الصفحة للأدمن فقط", "items": []}, status=403)
+
+    async with get_session() as session:
+        result = await session.execute(select(AffiliatePartner).order_by(AffiliatePartner.id.desc()).limit(50))
+        partners = result.scalars().all()
+        items = []
+        total_due = total_paid = total_users = 0
+        for partner in partners:
+            users_count = (
+                await session.execute(select(func.count(User.id)).where(User.affiliate_partner_id == partner.id))
+            ).scalar() or 0
+            due = (
+                await session.execute(
+                    select(func.sum(AffiliateCommission.commission_amount)).where(
+                        AffiliateCommission.partner_id == partner.id,
+                        AffiliateCommission.status == "due",
+                    )
+                )
+            ).scalar() or 0
+            paid = (
+                await session.execute(
+                    select(func.sum(AffiliateCommission.commission_amount)).where(
+                        AffiliateCommission.partner_id == partner.id,
+                        AffiliateCommission.status == "paid",
+                    )
+                )
+            ).scalar() or 0
+            sales = (
+                await session.execute(
+                    select(func.sum(AffiliateCommission.sale_amount)).where(
+                        AffiliateCommission.partner_id == partner.id
+                    )
+                )
+            ).scalar() or 0
+            commissions = (
+                await session.execute(
+                    select(func.count(AffiliateCommission.id)).where(
+                        AffiliateCommission.partner_id == partner.id
+                    )
+                )
+            ).scalar() or 0
+            total_due += float(due or 0)
+            total_paid += float(paid or 0)
+            total_users += int(users_count or 0)
+            items.append(
+                {
+                    "id": partner.id,
+                    "name": partner.name,
+                    "code": partner.code,
+                    "telegram_id": partner.telegram_id,
+                    "commission_percent": partner.commission_percent,
+                    "is_active": bool(partner.is_active),
+                    "users": int(users_count or 0),
+                    "sales": float(sales or 0),
+                    "due": float(due or 0),
+                    "paid": float(paid or 0),
+                    "commissions": int(commissions or 0),
+                }
+            )
+
+    return _json(
+        {
+            "ok": True,
+            "items": items,
+            "summary": {"users": total_users, "due": total_due, "paid": total_paid, "partners": len(items)},
+        }
+    )
+
+
 async def dashboard_health(request: web.Request) -> web.Response:
     return _json({"ok": True, "service": "dashboard", "date": date.today().isoformat()})
 
@@ -741,6 +826,7 @@ def create_dashboard_app() -> web.Application:
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/portfolio", dashboard_portfolio_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/opportunities", dashboard_saved_opportunity_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/ai", dashboard_ai_action)
+    app.router.add_get("/api/dashboard/{telegram_id}/{token}/affiliates", dashboard_affiliates)
     return app
 
 
@@ -931,6 +1017,10 @@ DASHBOARD_HTML = r"""
     .portfolio-form button { grid-column: 1 / -1; }
     .portfolio-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
     .portfolio-summary div { background: var(--panel-2); border-radius: 8px; padding: 10px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .data-table th, .data-table td { border-bottom: 1px solid var(--line); padding: 9px 7px; text-align: right; vertical-align: top; }
+    .data-table th { color: var(--muted); font-weight: 650; }
+    .table-wrap { overflow-x: auto; }
     .tiny-btn {
       border: 1px solid var(--line);
       background: transparent;
@@ -944,6 +1034,7 @@ DASHBOARD_HTML = r"""
     .health div { background: var(--panel-2); border-radius: 8px; padding: 12px; }
     .small { font-size: 13px; }
     #overview-section, #opportunities-section, #chart-section, #ai-section, #brief-section, #watch-section, #alerts-section,
+    #affiliates-section,
     #system-section, #portfolio-section, #saved-section, #activity-section, #symbols-section {
       scroll-margin-top: 18px;
     }
@@ -978,6 +1069,7 @@ DASHBOARD_HTML = r"""
         <button data-target="ai-section">الذكاء</button>
         <button data-target="watch-section">المتابعة</button>
         <button data-target="alerts-section">التنبيهات</button>
+        <button data-target="affiliates-section">الشركاء</button>
         <button data-target="system-section">النظام</button>
       </div>
     </aside>
@@ -1088,6 +1180,18 @@ DASHBOARD_HTML = r"""
               <button class="primary" id="ai-send">إرسال</button>
             </div>
             <div class="feedback" id="ai-feedback"></div>
+          </div>
+          <div class="panel" id="affiliates-section">
+            <div class="row-top">
+              <h2>لوحة الشركاء</h2>
+              <span class="muted small" id="affiliates-status">للأدمن</span>
+            </div>
+            <div class="portfolio-summary">
+              <div><div class="muted small">الشركاء</div><strong id="af-count">-</strong></div>
+              <div><div class="muted small">المستحق</div><strong id="af-due">-</strong></div>
+              <div><div class="muted small">المدفوع</div><strong id="af-paid">-</strong></div>
+            </div>
+            <div id="affiliates" class="status">جاري تحميل الشركاء...</div>
           </div>
           <div class="panel" id="watch-section">
             <h2>قائمتي</h2>
@@ -1383,6 +1487,41 @@ DASHBOARD_HTML = r"""
           <span class="muted">افتح فرصة من الرادار، احفظها، ثم حط هدف ووقف للصفقة عشان تتابعها يومياً.</span>
         </div>
       `;
+    }
+
+    function renderAffiliates(data) {
+      const box = document.getElementById("affiliates");
+      document.getElementById("af-count").textContent = data.summary?.partners ?? 0;
+      document.getElementById("af-due").textContent = fmt(data.summary?.due, 2);
+      document.getElementById("af-paid").textContent = fmt(data.summary?.paid, 2);
+      const items = data.items || [];
+      if (!items.length) {
+        box.textContent = "لا توجد بيانات شركاء حالياً";
+        return;
+      }
+      box.innerHTML = `<div class="table-wrap"><table class="data-table">
+        <thead><tr><th>الشريك</th><th>الكود</th><th>المستخدمون</th><th>المبيعات</th><th>المستحق</th><th>المدفوع</th></tr></thead>
+        <tbody>${items.map((item) => `<tr>
+          <td>${item.name}<br><span class="muted small">${item.is_active ? "نشط" : "متوقف"} | ${fmt(item.commission_percent, 0)}%</span></td>
+          <td>${item.code}</td>
+          <td>${item.users}</td>
+          <td>${fmt(item.sales, 2)}</td>
+          <td class="score">${fmt(item.due, 2)}</td>
+          <td>${fmt(item.paid, 2)}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`;
+    }
+
+    async function loadAffiliates() {
+      const box = document.getElementById("affiliates");
+      try {
+        const data = await getJson(`${root}/affiliates`);
+        renderAffiliates(data);
+        document.getElementById("affiliates-status").textContent = "محدث";
+      } catch (err) {
+        box.textContent = "لوحة الشركاء متاحة للأدمن فقط";
+        document.getElementById("affiliates-status").textContent = "للأدمن فقط";
+      }
     }
 
     function selectSymbol(symbol) {
@@ -1785,6 +1924,7 @@ DASHBOARD_HTML = r"""
     initChart();
     loadSummary().catch(() => document.getElementById("welcome").textContent = "تعذر تحميل بيانات الحساب");
     loadRadar();
+    loadAffiliates();
     liveTimer = setInterval(() => {
       if (document.visibilityState === "visible") loadChart();
     }, 30000);

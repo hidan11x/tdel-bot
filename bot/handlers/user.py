@@ -1239,7 +1239,25 @@ async def _answer_market_question(message: Message, query: str):
     from services.market_assistant import analyze_question
 
     result = await analyze_question(query)
-    await message.answer(result.text[:3900], reply_markup=_ask_stock_keyboard(result))
+    text = result.text
+    user = await _get_user(message.from_user.id)
+    if user and result.kind in {"symbol", "screen"}:
+        try:
+            from services.ai_assistant import build_ai_reply, can_use_ai
+
+            ok, _reason, _remaining, _limit = await can_use_ai(user, message.from_user.id)
+            if ok:
+                prompt = (
+                    "اكتب ملخصاً قصيراً جداً بلغة سعودية واضحة بناءً على البيانات التالية فقط. "
+                    "اذكر نقطة قوة ونقطة حذر، ولا تقدم توصية شراء أو بيع مؤكدة.\n\n"
+                    f"سؤال المستخدم: {query}\n\n"
+                    f"البيانات:\n{text}"
+                )
+                ai_text, remaining, limit = await build_ai_reply(user, message.from_user.id, prompt)
+                text = f"{text}\n\n🤖 ملخص ذكي:\n{ai_text}\n\nمتبقي AI اليوم: {remaining}/{limit}"
+        except Exception:
+            pass
+    await message.answer(text[:3900], reply_markup=_ask_stock_keyboard(result))
 
 
 async def handle_mtf_scan_input(message: Message):
