@@ -49,6 +49,7 @@ class User(Base):
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     referral_code: Mapped[str] = mapped_column(String, unique=True)
     referred_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    affiliate_partner_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("affiliate_partners.id"), nullable=True)
     daily_report: Mapped[bool] = mapped_column(Boolean, default=True)
     referral_days: Mapped[int] = mapped_column(Integer, default=0)
     language: Mapped[str] = mapped_column(String, default="ar")
@@ -128,6 +129,36 @@ class Payment(Base):
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", back_populates="payments")
+
+
+class AffiliatePartner(Base):
+    __tablename__ = "affiliate_partners"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    code: Mapped[str] = mapped_column(String, unique=True)
+    commission_percent: Mapped[float] = mapped_column(Float, default=30.0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+
+class AffiliateCommission(Base):
+    __tablename__ = "affiliate_commissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    partner_id: Mapped[int] = mapped_column(Integer, ForeignKey("affiliate_partners.id"))
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    activation_code_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("activation_codes.id"), nullable=True)
+    plan: Mapped[str] = mapped_column(String)
+    sale_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    commission_percent: Mapped[float] = mapped_column(Float, default=30.0)
+    commission_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String, default="due")
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    partner: Mapped["AffiliatePartner"] = relationship("AffiliatePartner", backref="commissions")
+    user: Mapped["User"] = relationship("User", backref="affiliate_commissions")
 
 
 class Watchlist(Base):
@@ -380,6 +411,12 @@ class PriceTracker(Base):
     symbol: Mapped[str] = mapped_column(String)
     market: Mapped[str] = mapped_column(String)
     target_price: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    entry_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    target_percent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stop_percent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    quantity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tracker_type: Mapped[str] = mapped_column(String, default="price")
     direction: Mapped[str] = mapped_column(String, default="above")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     triggered: Mapped[bool] = mapped_column(Boolean, default=False)

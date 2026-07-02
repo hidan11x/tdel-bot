@@ -64,10 +64,13 @@ async def cmd_start(message: Message, command=None, state=None):
 
     ref_code = None
     share_token = None
+    affiliate_code = None
     if command and command.args:
         arg = command.args.strip()
         if arg.startswith("ref"):
             ref_code = arg
+        elif arg.startswith("aff_"):
+            affiliate_code = arg
         elif arg.startswith("share_"):
             share_token = arg.replace("share_", "")
 
@@ -93,6 +96,10 @@ async def cmd_start(message: Message, command=None, state=None):
         from services.social import process_referral
 
         await process_referral(ref_code, telegram_id)
+    elif affiliate_code and user_created:
+        from services.affiliates import assign_affiliate
+
+        await assign_affiliate(affiliate_code, telegram_id)
 
     if share_token:
         from services.social import increment_share_view
@@ -964,6 +971,9 @@ async def handle_text_input(message: Message):
         elif context_type == "price_tracker":
             await handle_price_tracker_input(message)
             return
+        elif context_type == "trade_tracker":
+            await handle_trade_tracker_input(message)
+            return
         elif context_type == "mtf_scan":
             await handle_mtf_scan_input(message)
             return
@@ -1035,6 +1045,72 @@ async def handle_price_tracker_input(message: Message):
         f"{arrow} الهدف: {target_price:,.4f} ({dir_text})\n\n"
         f"البوت يبعت لك رسالة فورية لما السعر يوصل للهدف.",
         reply_markup=back_button("main_menu"),
+    )
+
+
+async def handle_trade_tracker_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "trade_tracker":
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) < 4:
+        await message.answer(
+            "❌ الصيغة غير صحيحة.\n\n"
+            "اكتب: الرمز سعر_الدخول هدف% وقف%\n"
+            "مثال: الراجحي 66 5 3\n"
+            "مثال: AAPL 190 4 2"
+        )
+        return
+
+    query = parts[0]
+    try:
+        entry_price = float(parts[1].replace(",", ""))
+        target_percent = float(parts[2].replace("%", "").replace(",", ""))
+        stop_percent = float(parts[3].replace("%", "").replace(",", ""))
+        quantity = float(parts[4].replace(",", "")) if len(parts) >= 5 else None
+        if entry_price <= 0 or target_percent <= 0 or stop_percent <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ الأرقام غير صحيحة. مثال: الراجحي 66 5 3")
+        return
+
+    from services.search_engine import auto_detect_symbol
+    detected = await auto_detect_symbol(query)
+    if not detected:
+        await message.answer("❌ ما قدرت أتعرف على الرمز. جرّب تكتب الرمز مباشرة مثل 1120 أو AAPL أو BTCUSDT.")
+        return
+
+    user = await _get_user(telegram_id)
+    if not user:
+        await message.answer("المستخدم غير موجود.")
+        _user_context.pop(telegram_id, None)
+        return
+
+    from services.price_tracker import create_trade_tracker
+
+    tracker = await create_trade_tracker(
+        user.id,
+        detected["symbol"],
+        detected["market"],
+        entry_price,
+        target_percent,
+        stop_percent,
+        quantity,
+    )
+    _user_context.pop(telegram_id, None)
+
+    name = detected.get("name_ar") or detected.get("name_en") or detected["symbol"]
+    await message.answer(
+        "✅ تم إنشاء صفقة المتابعة\n\n"
+        f"🏷 {name}\n"
+        f"🔢 {tracker.symbol} | {tracker.market}\n"
+        f"📍 الدخول: {entry_price:,.4f}\n"
+        f"🎯 الهدف: {tracker.target_price:,.4f} (+{target_percent:g}%)\n"
+        f"🛑 الوقف: {tracker.stop_price:,.4f} (-{stop_percent:g}%)\n\n"
+        "راح يجيك تنبيه إذا وصل الهدف أو وقف الخسارة.",
+        reply_markup=back_button("price_trackers"),
     )
 
 

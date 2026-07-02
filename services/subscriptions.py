@@ -6,6 +6,7 @@ from sqlalchemy import select, and_, update
 from database import get_session
 from models import User, Plan, ActivationCode, ActivationCodeRedemption, DailyUsage, Alert, Watchlist
 from config import settings
+from services.affiliates import record_affiliate_commission
 
 
 def get_plan_limits(plan_name: str) -> Dict[str, int]:
@@ -172,6 +173,7 @@ async def activate_code(code: str, user_id: int) -> str:
                 subscription_end=user.subscription_end,
             )
         )
+        await record_affiliate_commission(session, user, ac.id, ac.plan)
 
         await session.commit()
         return f"تم تفعيل الباقة {ac.plan} بنجاح!"

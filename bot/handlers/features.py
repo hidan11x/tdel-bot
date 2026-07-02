@@ -9,6 +9,7 @@ from models import User
 from services.price_tracker import (
     create_price_tracker, get_user_price_trackers, deactivate_price_tracker,
 )
+from services.market_data import get_current_price_sync
 from services.market_overview import get_market_overview
 from services.news import get_recent_news, format_news_items
 from services.social import (
@@ -176,29 +177,74 @@ async def cb_price_trackers(callback: CallbackQuery):
         return
 
     trackers = await get_user_price_trackers(user.id)
+    builder = InlineKeyboardBuilder()
     if not trackers:
         await callback.message.edit_text(
-            "🎯 لا توجد تتبعات أسعار نشطة.\n\nاستخدم زر 🎯 تتبع السعر من نتيجة التحليل لإضافة تتبع جديد.",
-            reply_markup=back_button("main_menu"),
+            "📌 لا توجد صفقات أو تنبيهات نشطة.\n\n"
+            "أضف صفقة بهذه الصيغة:\n"
+            "الرمز سعر_الدخول هدف% وقف%\n"
+            "مثال: الراجحي 66 5 3\n"
+            "مثال: AAPL 190 4 2\n"
+            "مثال: BTCUSDT 62000 6 3",
+            reply_markup=_price_tracker_menu(),
         )
         return
 
-    lines = ["🎯 تتبعات الأسعار النشطة:\n"]
-    builder = InlineKeyboardBuilder()
+    lines = ["📌 صفقاتي وتنبيهاتي:\n"]
     for i, t in enumerate(trackers[:10], 1):
         info = await get_symbol_info(t.symbol, t.market)
         name = info["name_ar"] if info else t.symbol
-        arrow = "📈" if t.direction == "above" else "📉"
         status = "✅" if t.triggered else "⏳"
-        lines.append(f"{i}. {status} {name} ({t.symbol})")
-        lines.append(f"   {arrow} الهدف: {t.target_price:,.4f}")
+        if getattr(t, "tracker_type", "price") == "trade":
+            current = None
+            try:
+                current = get_current_price_sync(t.symbol, t.market)
+            except Exception:
+                current = None
+            pnl = ""
+            if current and t.entry_price:
+                pnl_pct = ((current - t.entry_price) / t.entry_price) * 100
+                pnl = f" | الحالي {current:,.4f} ({pnl_pct:+.2f}%)"
+            lines.append(f"{i}. {status} صفقة {name} ({t.symbol})")
+            lines.append(f"   دخول {t.entry_price:,.4f}{pnl}")
+            lines.append(f"   هدف {t.target_price:,.4f} (+{t.target_percent:g}%) | وقف {t.stop_price:,.4f} (-{t.stop_percent:g}%)")
+        else:
+            arrow = "📈" if t.direction == "above" else "📉"
+            lines.append(f"{i}. {status} تنبيه {name} ({t.symbol})")
+            lines.append(f"   {arrow} الهدف: {t.target_price:,.4f}")
         lines.append("")
         if not t.triggered:
             builder.button(text=f"❌ {t.symbol}", callback_data=f"ptrk_del:{t.id}")
 
+    builder.button(text="➕ إضافة صفقة", callback_data="trade_tracker_create")
     builder.button(text="↩️ رجوع", callback_data="main_menu")
     builder.adjust(2, 1)
     await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=builder.as_markup())
+
+
+def _price_tracker_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ إضافة صفقة", callback_data="trade_tracker_create")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+@router.callback_query(F.data == "trade_tracker_create")
+async def cb_trade_tracker_create(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "trade_tracker"}
+    text = (
+        "📌 إضافة صفقة متابعة\n\n"
+        "اكتبها في رسالة واحدة:\n"
+        "الرمز سعر_الدخول هدف% وقف% الكمية_اختياري\n\n"
+        "أمثلة:\n"
+        "الراجحي 66 5 3\n"
+        "AAPL 190 4 2\n"
+        "BTCUSDT 62000 6 3 0.05\n\n"
+        "راح يجيك تنبيه إذا وصل الهدف أو وقف الخسارة."
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("price_trackers"))
 
 
 @router.callback_query(F.data.startswith("ptrk:"))

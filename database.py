@@ -64,3 +64,21 @@ def _run_lightweight_migrations(sync_conn):
         columns = {col["name"] for col in inspector.get_columns("users")}
         if "referral_reward_claimed" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN referral_reward_claimed BOOLEAN DEFAULT FALSE"))
+        if "affiliate_partner_id" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN affiliate_partner_id INTEGER"))
+
+    if "price_trackers" in tables:
+        columns = {col["name"] for col in inspector.get_columns("price_trackers")}
+        float_type = "DOUBLE PRECISION" if dialect == "postgresql" else "FLOAT"
+        if "stop_price" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE price_trackers ADD COLUMN stop_price {float_type}"))
+        if "entry_price" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE price_trackers ADD COLUMN entry_price {float_type}"))
+        if "target_percent" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE price_trackers ADD COLUMN target_percent {float_type}"))
+        if "stop_percent" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE price_trackers ADD COLUMN stop_percent {float_type}"))
+        if "quantity" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE price_trackers ADD COLUMN quantity {float_type}"))
+        if "tracker_type" not in columns:
+            sync_conn.execute(text("ALTER TABLE price_trackers ADD COLUMN tracker_type VARCHAR DEFAULT 'price'"))

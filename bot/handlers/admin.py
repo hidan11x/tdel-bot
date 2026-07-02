@@ -15,6 +15,8 @@ from models import (
     User,
     ActivationCode,
     ActivationCodeRedemption,
+    AffiliateCommission,
+    AffiliatePartner,
     Coupon,
     AdminLog,
     Payment,
@@ -38,6 +40,7 @@ from services.symbols_service import (
     get_all_symbols_admin, toggle_symbol_active, toggle_symbol_popular,
     get_symbol_by_id, update_symbol, add_symbol,
 )
+from services.affiliates import create_affiliate_partner
 
 router = Router()
 
@@ -48,9 +51,11 @@ class AdminStates(StatesGroup):
     broadcast_text = State()
     user_message = State()
     add_code_plan = State()
+    add_code_duration = State()
     add_coupon_discount = State()
     add_coupon_max_uses = State()
     add_coupon_expiry = State()
+    add_partner = State()
     extend_days = State()
     user_search = State()
     sym_edit_field = State()
@@ -194,6 +199,10 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_subs(cq)
     elif data == "admin_codes":
         await _admin_codes_menu(cq)
+    elif data == "admin_affiliates":
+        await _admin_affiliates(cq)
+    elif data.startswith("admin_affiliate_paid:"):
+        await _admin_affiliate_mark_paid(cq, int(data.split(":")[1]))
     elif data == "admin_stats":
         await _admin_stats(cq)
     elif data == "admin_settings":
@@ -224,6 +233,17 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
     elif data == "admin_coupon_create":
         await state.set_state(AdminStates.add_coupon_discount)
         await cq.message.edit_text("أدخل نسبة الخصم (1-99):", reply_markup=back_button("admin_panel"))
+        await cq.answer()
+    elif data == "admin_affiliate_create":
+        await state.set_state(AdminStates.add_partner)
+        await cq.message.edit_text(
+            "🤝 إنشاء شريك جديد\n\n"
+            "اكتب البيانات بهذا الشكل:\n"
+            "الاسم | نسبة العمولة | آيدي التليقرام اختياري\n\n"
+            "مثال:\n"
+            "قروب الأسهم | 30 | 123456789",
+            reply_markup=back_button("admin_affiliates"),
+        )
         await cq.answer()
     elif data == "admin_codes_create":
         await state.set_state(AdminStates.add_code_plan)
@@ -562,6 +582,82 @@ async def _admin_code_details(cq: CallbackQuery, code_id: int):
     await cq.answer()
 
 
+async def _admin_affiliates(cq: CallbackQuery):
+    bot_username = (await cq.bot.get_me()).username
+    async with get_session() as session:
+        result = await session.execute(select(AffiliatePartner).order_by(AffiliatePartner.id.desc()).limit(12))
+        partners = result.scalars().all()
+
+        rows = []
+        for partner in partners:
+            users_count = (
+                await session.execute(select(func.count(User.id)).where(User.affiliate_partner_id == partner.id))
+            ).scalar() or 0
+            due = (
+                await session.execute(
+                    select(func.sum(AffiliateCommission.commission_amount)).where(
+                        AffiliateCommission.partner_id == partner.id,
+                        AffiliateCommission.status == "due",
+                    )
+                )
+            ).scalar() or 0
+            paid = (
+                await session.execute(
+                    select(func.sum(AffiliateCommission.commission_amount)).where(
+                        AffiliateCommission.partner_id == partner.id,
+                        AffiliateCommission.status == "paid",
+                    )
+                )
+            ).scalar() or 0
+            rows.append((partner, users_count, float(due or 0), float(paid or 0)))
+
+    lines = ["🤝 <b>نظام الشركاء</b>", ""]
+    if not rows:
+        lines.append("لا يوجد شركاء حتى الآن.")
+    else:
+        for index, (partner, users_count, due, paid) in enumerate(rows, start=1):
+            link = f"https://t.me/{bot_username}?start=aff_{partner.code}"
+            status = "نشط" if partner.is_active else "متوقف"
+            lines.extend(
+                [
+                    f"{index}. <b>{partner.name}</b> | {status}",
+                    f"   الكود: <code>{partner.code}</code> | العمولة: {partner.commission_percent:.0f}%",
+                    f"   المستخدمون: {users_count} | المستحق: {due:.2f} SAR | المدفوع: {paid:.2f} SAR",
+                    f"   الرابط: {link}",
+                    "",
+                ]
+            )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ إنشاء شريك", callback_data="admin_affiliate_create")
+    for partner, _users_count, due, _paid in rows[:6]:
+        if due > 0:
+            builder.button(text=f"✅ دفع {partner.name}", callback_data=f"admin_affiliate_paid:{partner.id}")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(1)
+    await cq.message.edit_text("\n".join(lines)[:3900], reply_markup=builder.as_markup())
+    await cq.answer()
+
+
+async def _admin_affiliate_mark_paid(cq: CallbackQuery, partner_id: int):
+    async with get_session() as session:
+        result = await session.execute(
+            select(AffiliateCommission).where(
+                AffiliateCommission.partner_id == partner_id,
+                AffiliateCommission.status == "due",
+            )
+        )
+        items = result.scalars().all()
+        total = sum(float(item.commission_amount or 0) for item in items)
+        for item in items:
+            item.status = "paid"
+        await session.commit()
+    await cq.answer(f"تم تحديد {total:.2f} SAR كمدفوعة", show_alert=True)
+    await _admin_affiliates(cq)
+
+
 async def _admin_stats(cq: CallbackQuery):
     async with get_session() as session:
         today = settings.today()
@@ -882,6 +978,49 @@ async def handle_user_search(msg: Message, state: FSMContext):
     )
     await msg.answer(text, reply_markup=admin_users_actions(u.telegram_id))
     await state.clear()
+
+
+@router.message(AdminStates.add_partner)
+async def handle_add_partner(msg: Message, state: FSMContext):
+    text = msg.text.strip()
+    if text.startswith("/"):
+        await state.clear()
+        return await msg.answer("تم الإلغاء.", reply_markup=admin_menu())
+
+    parts = [part.strip() for part in text.split("|")]
+    if len(parts) < 2:
+        await msg.answer("❌ الصيغة خاطئة. مثال:\nقروب الأسهم | 30 | 123456789")
+        return
+
+    name = parts[0]
+    try:
+        percent = float(parts[1])
+        if percent <= 0 or percent > 100:
+            raise ValueError
+    except ValueError:
+        await msg.answer("❌ نسبة العمولة لازم تكون رقم بين 1 و 100.")
+        return
+
+    telegram_id = None
+    if len(parts) >= 3 and parts[2]:
+        try:
+            telegram_id = int(parts[2])
+        except ValueError:
+            await msg.answer("❌ آيدي التليقرام لازم يكون رقم.")
+            return
+
+    partner = await create_affiliate_partner(name, telegram_id, percent)
+    bot_username = (await msg.bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start=aff_{partner.code}"
+    await state.clear()
+    await msg.answer(
+        "✅ تم إنشاء الشريك\n\n"
+        f"الاسم: {partner.name}\n"
+        f"النسبة: {partner.commission_percent:.0f}%\n"
+        f"الكود: <code>{partner.code}</code>\n"
+        f"الرابط:\n{link}",
+        reply_markup=back_button("admin_affiliates"),
+    )
 
 
 async def _admin_indicators(cq: CallbackQuery):

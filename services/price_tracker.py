@@ -33,11 +33,21 @@ async def check_price_trackers(bot) -> int:
                 if current_price is None:
                     continue
 
+                trigger_reason = ""
                 should_trigger = False
-                if tracker.direction == "above" and current_price >= tracker.target_price:
+                if getattr(tracker, "tracker_type", "price") == "trade":
+                    if tracker.target_price and current_price >= tracker.target_price:
+                        should_trigger = True
+                        trigger_reason = "target"
+                    elif tracker.stop_price and current_price <= tracker.stop_price:
+                        should_trigger = True
+                        trigger_reason = "stop"
+                elif tracker.direction == "above" and current_price >= tracker.target_price:
                     should_trigger = True
+                    trigger_reason = "above"
                 elif tracker.direction == "below" and current_price <= tracker.target_price:
                     should_trigger = True
+                    trigger_reason = "below"
 
                 if not should_trigger:
                     continue
@@ -60,18 +70,34 @@ async def check_price_trackers(bot) -> int:
                 info = await get_symbol_info(tracker.symbol, tracker.market)
                 name = info["name_ar"] if info else tracker.symbol
 
-                arrow = "📈" if tracker.direction == "above" else "📉"
-                direction_text = "وصل إلى" if tracker.direction == "above" else "انخفض إلى"
-
-                message = (
-                    f"🎯 تنبيه سعر\n\n"
-                    f"🏷 {name}\n"
-                    f"🔢 {tracker.symbol}\n"
-                    f"{arrow} السعر {direction_text} هدفك\n"
-                    f"💰 السعر الحالي: {current_price:,.4f}\n"
-                    f"🎯 السعر المستهدف: {tracker.target_price:,.4f}\n\n"
-                    f"هذا تنبيه آلي تعليمي وليس توصية مالية."
-                )
+                if getattr(tracker, "tracker_type", "price") == "trade":
+                    change_pct = 0.0
+                    if tracker.entry_price:
+                        change_pct = ((current_price - tracker.entry_price) / tracker.entry_price) * 100
+                    title = "🚀 وصل هدف الربح" if trigger_reason == "target" else "⚠️ وصل وقف الخسارة"
+                    message = (
+                        f"{title}\n\n"
+                        f"🏷 {name}\n"
+                        f"🔢 {tracker.symbol}\n"
+                        f"💰 السعر الحالي: {current_price:,.4f}\n"
+                        f"📍 سعر الدخول: {tracker.entry_price:,.4f}\n"
+                        f"📊 التغير من الدخول: {change_pct:+.2f}%\n"
+                        f"🎯 الهدف: {tracker.target_price:,.4f} (+{tracker.target_percent:g}%)\n"
+                        f"🛑 الوقف: {tracker.stop_price:,.4f} (-{tracker.stop_percent:g}%)\n\n"
+                        f"هذا تنبيه آلي تعليمي وليس توصية مالية."
+                    )
+                else:
+                    arrow = "📈" if tracker.direction == "above" else "📉"
+                    direction_text = "وصل إلى" if tracker.direction == "above" else "انخفض إلى"
+                    message = (
+                        f"🎯 تنبيه سعر\n\n"
+                        f"🏷 {name}\n"
+                        f"🔢 {tracker.symbol}\n"
+                        f"{arrow} السعر {direction_text} هدفك\n"
+                        f"💰 السعر الحالي: {current_price:,.4f}\n"
+                        f"🎯 السعر المستهدف: {tracker.target_price:,.4f}\n\n"
+                        f"هذا تنبيه آلي تعليمي وليس توصية مالية."
+                    )
 
                 try:
                     await bot.send_message(user.telegram_id, message)
@@ -110,11 +136,42 @@ async def create_price_tracker(
         return tracker
 
 
+async def create_trade_tracker(
+    user_id: int,
+    symbol: str,
+    market: str,
+    entry_price: float,
+    target_percent: float,
+    stop_percent: float,
+    quantity: float | None = None,
+) -> Optional[PriceTracker]:
+    target_price = entry_price * (1 + target_percent / 100)
+    stop_price = entry_price * (1 - stop_percent / 100)
+    async with get_session() as session:
+        tracker = PriceTracker(
+            user_id=user_id,
+            symbol=symbol.upper(),
+            market=market.upper(),
+            target_price=target_price,
+            stop_price=stop_price,
+            entry_price=entry_price,
+            target_percent=target_percent,
+            stop_percent=stop_percent,
+            quantity=quantity,
+            tracker_type="trade",
+            direction="above",
+        )
+        session.add(tracker)
+        await session.commit()
+        await session.refresh(tracker)
+        return tracker
+
+
 async def get_user_price_trackers(user_id: int) -> List[PriceTracker]:
     async with get_session() as session:
         stmt = (
             select(PriceTracker)
-            .where(PriceTracker.user_id == user_id)
+            .where(PriceTracker.user_id == user_id, PriceTracker.is_active == True)
             .order_by(PriceTracker.created_at.desc())
         )
         result = await session.execute(stmt)

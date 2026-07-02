@@ -57,7 +57,7 @@ ALL_BUTTONS: list[tuple[str, str]] = [
     ("📊 حاسبة المخاطر", "risk_calc"),
     ("😱 الخوف والطمع", "fear_greed"),
     ("🔔 تنبيهاتي", "my_alerts"),
-    ("🎯 تتبع الأسعار", "price_trackers"),
+    ("📌 صفقاتي وتنبيهاتي", "price_trackers"),
     ("⭐ قائمتي", "my_watchlist"),
     ("📉 الشارت", "chart_menu"),
     ("🏆 أقوى القراءات", "top_readings"),
@@ -111,7 +111,7 @@ def section_menu(section: str, plan: str = "vip", private_signals: bool = False)
         "watch": [
             ("⭐ قائمتي", "my_watchlist"),
             ("🔔 تنبيهاتي", "my_alerts"),
-            ("🎯 تتبع الأسعار", "price_trackers"),
+            ("📌 صفقاتي وتنبيهاتي", "price_trackers"),
             ("📢 أخبار رموزي", "my_news_alerts"),
         ],
         "reports": [
@@ -223,6 +223,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         ("👥 المستخدمون", "admin_users"),
         ("💳 الاشتراكات", "admin_subs"),
         ("🔑 الأكواد", "admin_codes"),
+        ("🤝 الشركاء", "admin_affiliates"),
         ("🎫 الكوبونات", "admin_coupons"),
         ("📊 الإحصائيات", "admin_stats"),
         ("🩺 صحة النظام", "admin_health"),

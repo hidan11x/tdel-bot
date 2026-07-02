@@ -54,6 +54,10 @@ class UserCheckMiddleware(BaseMiddleware):
                         from services.social import process_referral
 
                         await process_referral(parts[1].strip(), telegram_id)
+                    elif len(parts) == 2 and parts[0].startswith("/start") and parts[1].startswith("aff_"):
+                        from services.affiliates import assign_affiliate
+
+                        await assign_affiliate(parts[1].strip(), telegram_id)
 
             if db_user.is_banned:
                 if isinstance(event, Message):
