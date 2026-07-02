@@ -5,6 +5,8 @@ from sqlalchemy import select, func
 from database import get_session
 from models import SharedAnalysis, User, ScanLog
 
+REFERRAL_REWARD_HOURS = 2
+
 
 async def create_share_link(user_id: int, symbol: str, market: str) -> Optional[str]:
     token = secrets.token_urlsafe(16)
@@ -57,18 +59,18 @@ async def process_referral(referral_code: str, new_user_id: int) -> bool:
             return False
 
         referrer.referrals_count = (referrer.referrals_count or 0) + 1
-        referrer.referral_days = (referrer.referral_days or 0) + 30
+        referrer.referral_days = (referrer.referral_days or 0) + REFERRAL_REWARD_HOURS
 
         if referrer.subscription_end:
             from datetime import datetime, timezone, timedelta
             base = referrer.subscription_end
             if base.tzinfo is None:
                 base = base.replace(tzinfo=timezone.utc)
-            referrer.subscription_end = base + timedelta(days=30)
+            referrer.subscription_end = base + timedelta(hours=REFERRAL_REWARD_HOURS)
         else:
             from datetime import datetime, timezone, timedelta
             referrer.subscription_start = datetime.now(timezone.utc)
-            referrer.subscription_end = datetime.now(timezone.utc) + timedelta(days=30)
+            referrer.subscription_end = datetime.now(timezone.utc) + timedelta(hours=REFERRAL_REWARD_HOURS)
             referrer.plan = "basic"
 
         await session.commit()

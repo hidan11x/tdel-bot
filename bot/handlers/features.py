@@ -13,7 +13,7 @@ from services.market_overview import get_market_overview
 from services.news import get_recent_news, format_news_items
 from services.social import (
     create_share_link, increment_share_view, process_referral,
-    export_scan_history_csv, get_user_scan_history,
+    export_scan_history_csv, get_user_scan_history, REFERRAL_REWARD_HOURS,
 )
 from services.symbols_service import get_symbol_info
 from bot.keyboards.main import back_button
@@ -271,13 +271,15 @@ async def cb_referral_menu(callback: CallbackQuery):
 
     bot_username = (await callback.bot.get_me()).username
     ref_link = f"https://t.me/{bot_username}?start=ref{user.telegram_id}"
+    reward_hours = int(user.referral_days or 0)
+    reward_label = "ساعتين" if REFERRAL_REWARD_HOURS == 2 else f"{REFERRAL_REWARD_HOURS} ساعة"
 
     text = (
         f"🎁 دعوة صديق\n\n"
         f"رابط الدعوة الخاص بك:\n{ref_link}\n\n"
         f"📊 إحالاتك: {user.referrals_count or 0}\n"
-        f"🎁 أيام مكافآت: {user.referral_days or 0} يوم\n\n"
-        f"كل صديق يدخل عبر رابطك تحصل على 30 يوم اشتراك مجاني!"
+        f"🎁 ساعات مكافآت: {reward_hours} ساعة\n\n"
+        f"كل صديق يدخل عبر رابطك تحصل على {reward_label} اشتراك مجاني!"
     )
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 
