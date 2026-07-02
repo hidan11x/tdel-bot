@@ -11,9 +11,9 @@ from sqlalchemy.exc import IntegrityError
 
 from config import settings
 from database import get_session
-from models import Alert, ErrorLog, ScanLog, Symbol, User, Watchlist
+from models import Alert, ErrorLog, PortfolioPosition, ScanLog, Symbol, User, Watchlist
 from services.dashboard_auth import verify_dashboard_token
-from services.market_data import YahooFinanceProvider, get_ohlcv
+from services.market_data import YahooFinanceProvider, get_current_price_sync, get_ohlcv
 from services.scanner import TOP_SYMBOLS
 from services.signal_engine import build_signal
 from services.indicators import calculate_rsi, find_support_resistance
@@ -72,6 +72,39 @@ def _alert_payload(item: Alert) -> dict[str, Any]:
         "value": item.value,
         "is_active": bool(item.is_active),
         "triggered": bool(item.triggered),
+    }
+
+
+def _portfolio_payload(item: PortfolioPosition) -> dict[str, Any]:
+    current = None
+    try:
+        current = get_current_price_sync(item.symbol, item.market)
+    except Exception:
+        current = None
+
+    mark_price = current if current is not None else item.exit_price
+    pnl = pnl_pct = value = None
+    if mark_price is not None:
+        multiplier = -1 if item.side == "short" else 1
+        pnl = (float(mark_price) - float(item.entry_price)) * float(item.quantity) * multiplier
+        cost = abs(float(item.entry_price) * float(item.quantity))
+        value = float(mark_price) * float(item.quantity)
+        pnl_pct = (pnl / cost * 100) if cost else 0.0
+
+    return {
+        "id": item.id,
+        "symbol": item.symbol,
+        "market": item.market,
+        "entry_price": item.entry_price,
+        "quantity": item.quantity,
+        "side": item.side,
+        "status": item.status,
+        "exit_price": item.exit_price,
+        "note": item.note or "",
+        "current_price": current,
+        "value": value,
+        "pnl": pnl,
+        "pnl_pct": pnl_pct,
     }
 
 
@@ -136,6 +169,14 @@ async def dashboard_summary(request: web.Request) -> web.Response:
                 .limit(20)
             )
         ).scalars().all()
+        positions = (
+            await session.execute(
+                select(PortfolioPosition)
+                .where(PortfolioPosition.user_id == user.id)
+                .order_by(PortfolioPosition.created_at.desc())
+                .limit(50)
+            )
+        ).scalars().all()
         scans_today = (
             await session.execute(
                 select(func.count(ScanLog.id)).where(
@@ -171,6 +212,11 @@ async def dashboard_summary(request: web.Request) -> web.Response:
             {"symbol": "BTCUSDT", "market": "CRYPTO", "name_ar": "Bitcoin", "name_en": "Bitcoin", "sector": "", "popular": True},
         ]
 
+    portfolio_items = [_portfolio_payload(item) for item in positions]
+    open_positions = [item for item in portfolio_items if item["status"] == "open"]
+    total_value = sum(float(item["value"] or 0) for item in open_positions)
+    total_pnl = sum(float(item["pnl"] or 0) for item in open_positions)
+
     return _json(
         {
             "user": {
@@ -190,6 +236,12 @@ async def dashboard_summary(request: web.Request) -> web.Response:
             "symbols": symbols,
             "watchlist": watchlist_symbols,
             "alerts": [_alert_payload(item) for item in alerts],
+            "portfolio": {
+                "items": portfolio_items,
+                "open_count": len(open_positions),
+                "total_value": total_value,
+                "total_pnl": total_pnl,
+            },
             "last_scans": [
                 {
                     "symbol": scan.symbol,
@@ -441,6 +493,64 @@ async def dashboard_alert_action(request: web.Request) -> web.Response:
     return _json({"ok": True, "message": "تم إنشاء التنبيه", "alert": _alert_payload(alert)})
 
 
+async def dashboard_portfolio_action(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+
+    data = await _request_json(request)
+    action = str(data.get("action", "add")).strip().lower()
+
+    if action == "close":
+        try:
+            position_id = int(data.get("id"))
+        except (TypeError, ValueError):
+            return _json({"ok": False, "message": "رقم الصفقة غير صالح"}, status=400)
+
+        async with get_session() as session:
+            position = await session.get(PortfolioPosition, position_id)
+            if not position or position.user_id != user.id:
+                return _json({"ok": False, "message": "الصفقة غير موجودة"}, status=404)
+            current = get_current_price_sync(position.symbol, position.market)
+            position.status = "closed"
+            position.exit_price = current or position.entry_price
+            position.closed_at = settings.now()
+            await session.commit()
+        return _json({"ok": True, "message": "تم إغلاق الصفقة"})
+
+    symbol = str(data.get("symbol", "")).strip().upper()
+    market = str(data.get("market", "")).strip().upper()
+    side = str(data.get("side", "long")).strip().lower()
+    note = str(data.get("note", "")).strip()[:180]
+    if not symbol or market not in {"SAUDI", "US", "CRYPTO"} or side not in {"long", "short"}:
+        return _json({"ok": False, "message": "بيانات الصفقة غير صالحة"}, status=400)
+
+    try:
+        entry_price = float(str(data.get("entry_price", "")).replace(",", ""))
+        quantity = float(str(data.get("quantity", "")).replace(",", ""))
+    except ValueError:
+        return _json({"ok": False, "message": "سعر الدخول والكمية لازم تكون أرقام"}, status=400)
+
+    if entry_price <= 0 or quantity <= 0:
+        return _json({"ok": False, "message": "سعر الدخول والكمية لازم تكون أكبر من صفر"}, status=400)
+
+    async with get_session() as session:
+        position = PortfolioPosition(
+            user_id=user.id,
+            symbol=symbol,
+            market=market,
+            entry_price=entry_price,
+            quantity=quantity,
+            side=side,
+            note=note,
+        )
+        session.add(position)
+        await session.commit()
+        await session.refresh(position)
+
+    return _json({"ok": True, "message": "تمت إضافة الصفقة", "position": _portfolio_payload(position)})
+
+
 async def dashboard_health(request: web.Request) -> web.Response:
     return _json({"ok": True, "service": "dashboard", "date": date.today().isoformat()})
 
@@ -455,6 +565,7 @@ def create_dashboard_app() -> web.Application:
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/symbols", dashboard_symbols)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/watchlist", dashboard_watchlist_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/alerts", dashboard_alert_action)
+    app.router.add_post("/api/dashboard/{telegram_id}/{token}/portfolio", dashboard_portfolio_action)
     return app
 
 
@@ -565,7 +676,7 @@ DASHBOARD_HTML = r"""
     .down { color: var(--red); }
     .status { color: var(--muted); min-height: 22px; }
     .chart-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    input, select, .seg button, .market-tabs button, .action-panel button {
+    input, select, .seg button, .market-tabs button, .action-panel button, .portfolio-form button {
       border: 1px solid var(--line);
       background: var(--panel-2);
       color: var(--text);
@@ -597,10 +708,22 @@ DASHBOARD_HTML = r"""
       padding-top: 12px;
     }
     .action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .action-panel button.primary { background: rgba(39, 211, 178, .14); border-color: rgba(39, 211, 178, .35); color: var(--teal); }
+    button.primary, .action-panel button.primary { background: rgba(39, 211, 178, .14); border-color: rgba(39, 211, 178, .35); color: var(--teal); }
     .action-panel button.warn { background: rgba(244, 184, 96, .12); border-color: rgba(244, 184, 96, .32); color: var(--amber); }
     .feedback { color: var(--muted); min-height: 20px; }
     .mini-select { min-width: 170px; }
+    .portfolio-form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+    .portfolio-form button { grid-column: 1 / -1; }
+    .portfolio-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+    .portfolio-summary div { background: var(--panel-2); border-radius: 8px; padding: 10px; }
+    .tiny-btn {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font: inherit;
+    }
     #chart { width: 100%; height: 390px; }
     .health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .health div { background: var(--panel-2); border-radius: 8px; padding: 12px; }
@@ -619,6 +742,7 @@ DASHBOARD_HTML = r"""
       .nav { grid-template-columns: repeat(2, 1fr); }
       .metric .value { font-size: 24px; }
       .health { grid-template-columns: 1fr; }
+      .portfolio-form, .portfolio-summary { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -692,6 +816,12 @@ DASHBOARD_HTML = r"""
                 <input class="mini-select" id="alert-value" inputmode="decimal" placeholder="القيمة" />
                 <button class="primary" id="create-alert">إنشاء تنبيه</button>
               </div>
+              <div class="action-row">
+                <button id="smart-resistance">تنبيه اختراق المقاومة</button>
+                <button id="smart-support">تنبيه كسر الدعم</button>
+                <button id="smart-rsi-low">RSI أقل من 30</button>
+                <button id="smart-rsi-high">RSI أعلى من 70</button>
+              </div>
               <div class="feedback" id="action-feedback"></div>
             </div>
           </div>
@@ -713,6 +843,26 @@ DASHBOARD_HTML = r"""
           <div class="panel">
             <h2>تنبيهاتي</h2>
             <div id="alerts" class="status">جاري التحميل...</div>
+          </div>
+          <div class="panel">
+            <h2>محفظتي التجريبية</h2>
+            <div class="portfolio-summary">
+              <div><div class="muted small">صفقات مفتوحة</div><strong id="pf-count">-</strong></div>
+              <div><div class="muted small">القيمة</div><strong id="pf-value">-</strong></div>
+              <div><div class="muted small">الربح/الخسارة</div><strong id="pf-pnl">-</strong></div>
+            </div>
+            <div class="portfolio-form">
+              <input id="pf-entry" inputmode="decimal" placeholder="سعر الدخول" />
+              <input id="pf-qty" inputmode="decimal" placeholder="الكمية" />
+              <select id="pf-side">
+                <option value="long">شراء</option>
+                <option value="short">بيع</option>
+              </select>
+              <input id="pf-note" placeholder="ملاحظة اختيارية" />
+              <button class="primary" id="add-position">إضافة صفقة للرمز الحالي</button>
+            </div>
+            <div class="feedback" id="portfolio-feedback"></div>
+            <div id="portfolio" class="status">جاري التحميل...</div>
           </div>
           <div class="panel">
             <h2>آخر نشاط</h2>
@@ -745,6 +895,7 @@ DASHBOARD_HTML = r"""
     let selectedMarket = "ALL";
     let searchTimer;
     let liveTimer;
+    let latestChartData = {};
     let supportLine;
     let resistanceLine;
     let chart, candleSeries, volumeSeries;
@@ -772,6 +923,10 @@ DASHBOARD_HTML = r"""
 
     function setFeedback(text) {
       document.getElementById("action-feedback").textContent = text || "";
+    }
+
+    function setPortfolioFeedback(text) {
+      document.getElementById("portfolio-feedback").textContent = text || "";
     }
 
     function renderWatchlist(items) {
@@ -810,6 +965,36 @@ DASHBOARD_HTML = r"""
           <span class="muted">${typeLabel[a.alert_type] || a.alert_type} | ${fmt(a.value, 4)}</span>
         </div>`
       ).join("");
+    }
+
+    function renderPortfolio(portfolio) {
+      const box = document.getElementById("portfolio");
+      const items = portfolio?.items || [];
+      document.getElementById("pf-count").textContent = portfolio?.open_count ?? 0;
+      document.getElementById("pf-value").textContent = fmt(portfolio?.total_value, 2);
+      const pnlEl = document.getElementById("pf-pnl");
+      pnlEl.textContent = fmt(portfolio?.total_pnl, 2);
+      pnlEl.className = Number(portfolio?.total_pnl || 0) >= 0 ? "up" : "down";
+
+      if (!items.length) {
+        box.textContent = "لا توجد صفقات بعد";
+        return;
+      }
+
+      box.innerHTML = items.slice(0, 12).map((p) => {
+        const cls = Number(p.pnl || 0) >= 0 ? "up" : "down";
+        const status = p.status === "open" ? "مفتوحة" : "مغلقة";
+        const closeBtn = p.status === "open" ? `<button class="tiny-btn" data-close="${p.id}">إغلاق</button>` : "";
+        return `<div class="scan-row">
+          <div class="row-top"><span class="name">${p.symbol}</span><span class="${cls}">${fmt(p.pnl, 2)} (${fmt(p.pnl_pct, 2)}%)</span></div>
+          <div class="row-top"><span class="muted">${marketName(p.market)} | دخول ${fmt(p.entry_price, 4)} | كمية ${fmt(p.quantity, 4)} | ${status}</span>${closeBtn}</div>
+          ${p.note ? `<div class="muted small">${p.note}</div>` : ""}
+        </div>`;
+      }).join("");
+
+      [...box.querySelectorAll("[data-close]")].forEach((btn) => {
+        btn.addEventListener("click", () => closePosition(Number(btn.dataset.close)));
+      });
     }
 
     function selectSymbol(symbol) {
@@ -864,6 +1049,7 @@ DASHBOARD_HTML = r"""
       document.getElementById("s-crypto").textContent = statusText(data.markets.crypto);
       renderWatchlist(data.watchlist);
       renderAlerts(data.alerts);
+      renderPortfolio(data.portfolio);
 
       document.getElementById("last-scans").innerHTML = data.last_scans.length ? data.last_scans.map(s =>
         `<div class="scan-row"><div class="row-top"><span class="name">${s.symbol}</span><span class="score">${fmt(s.score, 0)}/100</span></div><span class="muted">${s.signal || marketName(s.market)}</span></div>`
@@ -908,6 +1094,7 @@ DASHBOARD_HTML = r"""
       document.getElementById("chart-status").textContent = "جاري التحميل...";
       try {
         const data = await getJson(`${root}/chart?symbol=${encodeURIComponent(currentSymbol.symbol)}&market=${encodeURIComponent(currentSymbol.market)}&interval=${currentInterval}`);
+        latestChartData = data;
         if (supportLine) { candleSeries.removePriceLine(supportLine); supportLine = null; }
         if (resistanceLine) { candleSeries.removePriceLine(resistanceLine); resistanceLine = null; }
         candleSeries.setData(data.data.map(x => ({ time: x.time, open: x.open, high: x.high, low: x.low, close: x.close })));
@@ -922,6 +1109,9 @@ DASHBOARD_HTML = r"""
         document.getElementById("chart-status").textContent = `${data.symbol} | ${data.interval} | حي`;
         document.getElementById("chart-meta").textContent =
           `السعر ${fmt(data.last_price, 4)} | دعم ${fmt(data.support, 4)} | مقاومة ${fmt(data.resistance, 4)} | RSI ${data.rsi ? fmt(data.rsi, 1) : "-"}`;
+        if (!document.getElementById("pf-entry").value && data.last_price) {
+          document.getElementById("pf-entry").placeholder = `سعر الدخول - الحالي ${fmt(data.last_price, 4)}`;
+        }
       } catch (err) {
         document.getElementById("chart-status").textContent = "تعذر تحميل الشارت";
       }
@@ -961,6 +1151,7 @@ DASHBOARD_HTML = r"""
         document.getElementById("m-alerts").textContent = data.cards.alerts;
         renderWatchlist(data.watchlist);
         renderAlerts(data.alerts);
+        renderPortfolio(data.portfolio);
       } catch (err) {}
     }
 
@@ -1017,6 +1208,57 @@ DASHBOARD_HTML = r"""
       }
     }
 
+    function fillSmartAlert(type, value, label) {
+      if (!value) {
+        setFeedback("القيمة غير متاحة حالياً، انتظر تحميل الشارت");
+        return;
+      }
+      document.getElementById("alert-type").value = type;
+      document.getElementById("alert-value").value = Number(value).toFixed(type.startsWith("rsi") ? 1 : 4);
+      setFeedback(label);
+    }
+
+    async function addPosition() {
+      const entry = document.getElementById("pf-entry").value.trim() || latestChartData.last_price;
+      const quantity = document.getElementById("pf-qty").value.trim();
+      const side = document.getElementById("pf-side").value;
+      const note = document.getElementById("pf-note").value.trim();
+      if (!entry || !quantity) {
+        setPortfolioFeedback("اكتب سعر الدخول والكمية");
+        return;
+      }
+      setPortfolioFeedback("جاري إضافة الصفقة...");
+      try {
+        const data = await postJson(`${root}/portfolio`, {
+          action: "add",
+          symbol: currentSymbol.symbol,
+          market: currentSymbol.market,
+          entry_price: entry,
+          quantity,
+          side,
+          note,
+        });
+        setPortfolioFeedback(data.message || "تمت إضافة الصفقة");
+        document.getElementById("pf-entry").value = "";
+        document.getElementById("pf-qty").value = "";
+        document.getElementById("pf-note").value = "";
+        await refreshSummaryPanels();
+      } catch (err) {
+        setPortfolioFeedback(err.message);
+      }
+    }
+
+    async function closePosition(id) {
+      setPortfolioFeedback("جاري إغلاق الصفقة...");
+      try {
+        const data = await postJson(`${root}/portfolio`, { action: "close", id });
+        setPortfolioFeedback(data.message || "تم إغلاق الصفقة");
+        await refreshSummaryPanels();
+      } catch (err) {
+        setPortfolioFeedback(err.message);
+      }
+    }
+
     document.getElementById("intervals").addEventListener("click", (event) => {
       const btn = event.target.closest("button");
       if (!btn) return;
@@ -1041,6 +1283,19 @@ DASHBOARD_HTML = r"""
     document.getElementById("add-watch").addEventListener("click", addCurrentToWatchlist);
     document.getElementById("remove-watch").addEventListener("click", removeCurrentFromWatchlist);
     document.getElementById("create-alert").addEventListener("click", createCurrentAlert);
+    document.getElementById("add-position").addEventListener("click", addPosition);
+    document.getElementById("smart-resistance").addEventListener("click", () =>
+      fillSmartAlert("price_above", latestChartData.resistance, "تم تعبئة تنبيه اختراق المقاومة")
+    );
+    document.getElementById("smart-support").addEventListener("click", () =>
+      fillSmartAlert("price_below", latestChartData.support, "تم تعبئة تنبيه كسر الدعم")
+    );
+    document.getElementById("smart-rsi-low").addEventListener("click", () =>
+      fillSmartAlert("rsi_below", 30, "تم تعبئة تنبيه RSI أقل من 30")
+    );
+    document.getElementById("smart-rsi-high").addEventListener("click", () =>
+      fillSmartAlert("rsi_above", 70, "تم تعبئة تنبيه RSI أعلى من 70")
+    );
 
     initChart();
     loadSummary().catch(() => document.getElementById("welcome").textContent = "تعذر تحميل بيانات الحساب");
