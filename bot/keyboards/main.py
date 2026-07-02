@@ -7,7 +7,7 @@ from config import settings
 
 PLAN_FEATURES = {
     "free": [
-        "referral_menu", "subscription", "support", "help",
+        "ask_stock", "referral_menu", "subscription", "support", "help",
     ],
     "basic": [
         "scan_quick", "symbol_browser", "market:saudi", "market:us", "market:crypto",
@@ -36,6 +36,7 @@ PLAN_FEATURES = {
 
 ALL_BUTTONS: list[tuple[str, str]] = [
     ("📊 فحص سريع", "scan_quick"),
+    ("🔎 اسأل عن سهم", "ask_stock"),
     ("🔍 تصفح الرموز", "symbol_browser"),
     ("🗺️ الخريطة الحرارية", "heatmap"),
     ("📈 السوق السعودي", "market:saudi"),
@@ -94,6 +95,7 @@ def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
 def section_menu(section: str, plan: str = "vip", private_signals: bool = False) -> InlineKeyboardMarkup:
     groups = {
         "analysis": [
+            ("🔎 اسأل عن سهم", "ask_stock"),
             ("📊 فحص سريع", "scan_quick"),
             ("🔍 تصفح الرموز", "symbol_browser"),
             ("📉 الشارت", "chart_menu"),

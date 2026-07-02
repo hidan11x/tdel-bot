@@ -534,6 +534,73 @@ async def cb_full_analysis(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 
 
+@router.callback_query(F.data == "ask_stock")
+async def cb_ask_stock(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "ask_stock"}
+    text = (
+        "🔎 اسأل عن سهم أو عملة\n\n"
+        "اكتب سؤالك بالطريقة اللي تبيها:\n"
+        "• الراجحي\n"
+        "• وش وضع PLTR؟\n"
+        "• هل NVDA مرتفع اليوم؟\n"
+        "• الأمريكي تحت 150\n"
+        "• الكريبتو تحت 1\n\n"
+        "البوت يبحث في البيانات المتاحة ويرجع لك قراءة مختصرة."
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("menu:analysis"))
+
+
+@router.callback_query(F.data.startswith("ma_symbol:"))
+async def cb_market_assistant_symbol(callback: CallbackQuery):
+    await callback.answer()
+    _, symbol, market = callback.data.split(":", 2)
+    await callback.message.edit_text("🔎 جاري تجهيز القراءة...")
+    from services.market_assistant import summarize_symbol
+
+    result = await summarize_symbol({"symbol": symbol, "market": market, "name_ar": symbol, "name_en": symbol})
+    await callback.message.edit_text(result.text[:3900], reply_markup=_ask_stock_keyboard(result))
+
+
+@router.callback_query(F.data.startswith("ma_scan:"))
+async def cb_market_assistant_scan(callback: CallbackQuery):
+    await callback.answer()
+    _, symbol, market = callback.data.split(":", 2)
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("المستخدم غير موجود.", reply_markup=back_button("main_menu"))
+        return
+    await callback.message.edit_text(f"📊 جاري تحليل {symbol}...")
+    result = await scan_symbol(symbol, market, "1d")
+    if not result:
+        await callback.message.edit_text("❌ تعذر الحصول على بيانات كافية.", reply_markup=back_button("ask_stock"))
+        return
+    signal = build_signal(result)
+    await callback.message.edit_text(format_signal_message(signal)[:3900], reply_markup=back_button("ask_stock"))
+
+
+@router.callback_query(F.data.startswith("ma_watch:"))
+async def cb_market_assistant_watch(callback: CallbackQuery):
+    await callback.answer()
+    _, symbol, market = callback.data.split(":", 2)
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("المستخدم غير موجود.", reply_markup=back_button("ask_stock"))
+        return
+    from models import Watchlist
+
+    async with get_session() as session:
+        existing = (
+            await session.execute(
+                select(Watchlist).where(Watchlist.user_id == user.id, Watchlist.symbol == symbol, Watchlist.market == market)
+            )
+        ).scalar_one_or_none()
+        if not existing:
+            session.add(Watchlist(user_id=user.id, symbol=symbol, market=market, note=symbol))
+            await session.commit()
+    await callback.message.edit_text(f"✅ تمت إضافة {symbol} لقائمة المتابعة.", reply_markup=back_button("ask_stock"))
+
+
 @router.callback_query(F.data == "help")
 async def cb_help(callback: CallbackQuery):
     await callback.answer()
@@ -974,6 +1041,9 @@ async def handle_text_input(message: Message):
         elif context_type == "trade_tracker":
             await handle_trade_tracker_input(message)
             return
+        elif context_type == "ask_stock":
+            await handle_ask_stock_input(message)
+            return
         elif context_type == "mtf_scan":
             await handle_mtf_scan_input(message)
             return
@@ -1112,6 +1182,41 @@ async def handle_trade_tracker_input(message: Message):
         "راح يجيك تنبيه إذا وصل الهدف أو وقف الخسارة.",
         reply_markup=back_button("price_trackers"),
     )
+
+
+def _ask_stock_keyboard(result):
+    builder = InlineKeyboardBuilder()
+    if result.kind == "symbol" and result.symbol and result.market:
+        builder.button(text="📊 تحليل كامل", callback_data=f"ma_scan:{result.symbol}:{result.market}")
+        builder.button(text="📉 شارت", callback_data=f"chart:{result.symbol}:{result.market}")
+        builder.button(text="⭐ متابعة", callback_data=f"ma_watch:{result.symbol}:{result.market}")
+        builder.button(text="📌 أضف صفقة", callback_data="trade_tracker_create")
+    elif result.kind == "screen" and result.items:
+        for item in result.items[:8]:
+            builder.button(text=f"{item['symbol']} {item['price']:,.2f}", callback_data=f"ma_symbol:{item['symbol']}:{item['market']}")
+    builder.button(text="🔎 سؤال جديد", callback_data="ask_stock")
+    builder.button(text="↩️ رجوع", callback_data="menu:analysis")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+async def handle_ask_stock_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "ask_stock":
+        return
+
+    query = message.text.strip()
+    if len(query) < 2:
+        await message.answer("اكتب اسم السهم أو سؤالك.")
+        return
+
+    await message.answer("🔎 جاري البحث والتحقق من البيانات...")
+    from services.market_assistant import analyze_question
+
+    result = await analyze_question(query)
+    _user_context.pop(telegram_id, None)
+    await message.answer(result.text[:3900], reply_markup=_ask_stock_keyboard(result))
 
 
 async def handle_mtf_scan_input(message: Message):
