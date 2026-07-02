@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 from contextlib import suppress
@@ -33,6 +34,38 @@ from services.scheduler import ReportScheduler
 BASE_DIR = Path(__file__).resolve().parent
 
 scheduler: Optional[ReportScheduler] = None
+
+
+def _env_value(key: str, default: str = "") -> str:
+    value = os.getenv(key, default).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
+async def _start_fallback_http_server(reason: str):
+    from aiohttp import web
+
+    async def health(_request):
+        return web.json_response(
+            {
+                "ok": False,
+                "service": "fallback",
+                "message": "Dashboard failed to start, but Railway HTTP is online.",
+                "reason": str(reason)[:500],
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/{tail:.*}", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(_env_value("DASHBOARD_PORT") or _env_value("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.warning("Fallback HTTP server started on port {}", port)
+    return runner
 
 
 async def on_startup(bot: Bot) -> None:
@@ -81,6 +114,15 @@ async def main() -> None:
 
     settings.validate()
 
+    dashboard_runner = None
+    try:
+        from webapp.dashboard import start_dashboard_server
+
+        dashboard_runner = await start_dashboard_server()
+    except Exception as e:
+        logger.exception("Dashboard server failed to start: {}", e)
+        dashboard_runner = await _start_fallback_http_server(str(e))
+
     from database import init_db, engine
     await init_db()
     logger.info("Database initialized (data preserved)")
@@ -127,6 +169,8 @@ async def main() -> None:
     except Exception as exc:
         logger.exception("Unhandled exception: {}", exc)
     finally:
+        if dashboard_runner:
+            await dashboard_runner.cleanup()
         await bot.session.close()
         await engine.dispose()
 
