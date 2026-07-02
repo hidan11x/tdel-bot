@@ -16,6 +16,8 @@ from services.social import (
     export_scan_history_csv, get_user_scan_history, REFERRAL_REWARD_HOURS,
 )
 from services.symbols_service import get_symbol_info
+from services.feature_access import PREDICTION_FEATURE, has_feature_access
+from services.private_prediction import build_private_prediction
 from bot.keyboards.main import back_button
 from config import settings
 
@@ -37,6 +39,46 @@ async def _is_vip_user(telegram_id: int) -> bool:
         return True
     user = await _get_user(telegram_id)
     return bool(user and user.plan in ("vip", "lifetime"))
+
+
+async def _can_use_prediction(telegram_id: int) -> bool:
+    return await has_feature_access(telegram_id, PREDICTION_FEATURE)
+
+
+@router.callback_query(F.data == "private_prediction")
+async def cb_private_prediction(callback: CallbackQuery):
+    await callback.answer()
+    if not await _can_use_prediction(callback.from_user.id):
+        await callback.message.edit_text("الأمر غير متاح لحسابك.", reply_markup=back_button("menu:analysis"))
+        return
+    _user_context[callback.from_user.id] = {"context": "private_prediction"}
+    await callback.message.edit_text(
+        "🔮 الإشارات الخاصة\n\nاكتب اسم أو رمز الأصل المالي:\nمثال: الراجحي، AAPL، BTCUSDT",
+        reply_markup=back_button("menu:analysis"),
+    )
+
+
+async def handle_private_prediction_input(message: Message):
+    if not await _can_use_prediction(message.from_user.id):
+        _user_context.pop(message.from_user.id, None)
+        await message.answer("الأمر غير متاح لحسابك.")
+        return
+
+    query = message.text.strip()
+    if len(query) < 2:
+        await message.answer("اكتب اسم أو رمز صحيح.")
+        return
+
+    wait_msg = await message.answer(f"🔮 جاري تجهيز الإشارة الخاصة لـ {query}...")
+    report = await build_private_prediction(query)
+    _user_context.pop(message.from_user.id, None)
+    if not report:
+        await wait_msg.edit_text(
+            "تعذر تجهيز الإشارة. تأكد من الاسم أو الرمز وحاول مرة ثانية.",
+            reply_markup=back_button("menu:analysis"),
+        )
+        return
+    await wait_msg.edit_text(report[:4000], reply_markup=back_button("menu:analysis"))
 
 
 @router.callback_query(F.data == "market_overview")

@@ -15,6 +15,7 @@ from bot.keyboards.main import (
 from utils.formatter import format_profile, format_technical_report
 from services.subscriptions import get_plan_limits
 from services.dashboard_auth import dashboard_url
+from services.feature_access import PREDICTION_FEATURE, has_feature_access
 from services.scanner import scan_symbol, TOP_SYMBOLS
 from services.signal_engine import build_signal, format_signal_message
 from services.symbols_service import (
@@ -198,6 +199,18 @@ async def cmd_whoami(message: Message):
         "إذا أنت صاحب البوت وظهر أدمن: لا، أضف رقم Telegram ID في متغير Railway باسم ADMIN_IDS."
     )
     await message.answer(text, reply_markup=back_button("main_menu"))
+
+
+@router.message(Command("predict"))
+async def cmd_predict(message: Message):
+    if not await has_feature_access(message.from_user.id, PREDICTION_FEATURE):
+        await message.answer("الأمر غير متاح لحسابك.")
+        return
+    _user_context[message.from_user.id] = {"context": "private_prediction"}
+    await message.answer(
+        "🔮 الإشارات الخاصة\n\nاكتب اسم أو رمز الأصل المالي:\nمثال: الراجحي، AAPL، BTCUSDT",
+        reply_markup=back_button("menu:analysis"),
+    )
 
 
 async def _send_dashboard_link(message: Message, telegram_id: int, plan: str):
@@ -386,7 +399,10 @@ async def cb_section_menu(callback: CallbackQuery):
         "account": "👤 حسابي والدعم\n\nإدارة الاشتراك والحساب والتواصل:",
     }
     text = titles.get(section, "القائمة")
-    await callback.message.edit_text(text, reply_markup=section_menu(section, plan))
+    private_signals = False
+    if section == "analysis":
+        private_signals = await has_feature_access(callback.from_user.id, PREDICTION_FEATURE)
+    await callback.message.edit_text(text, reply_markup=section_menu(section, plan, private_signals=private_signals))
 
 
 @router.callback_query(F.data == "vip_dashboard")
@@ -858,6 +874,10 @@ async def handle_text_input(message: Message):
             return
         elif context_type == "vip_symbol":
             await handle_vip_symbol_input(message)
+            return
+        elif context_type == "private_prediction":
+            from bot.handlers.features import handle_private_prediction_input
+            await handle_private_prediction_input(message)
             return
         elif context_type == "fib_scan":
             await handle_fib_input(message)

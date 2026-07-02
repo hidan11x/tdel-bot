@@ -180,6 +180,18 @@ class MarketSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 
 
+class FeatureAccess(Base):
+    __tablename__ = "feature_access"
+    __table_args__ = (UniqueConstraint("telegram_id", "feature_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger)
+    feature_key: Mapped[str] = mapped_column(String)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+
 class SystemSettings(Base):
     __tablename__ = "system_settings"
 

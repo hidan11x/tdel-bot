@@ -16,6 +16,12 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.keyboards import admin_menu, admin_users_actions, back_button, main_menu
 from services.health import build_admin_health_report
+from services.feature_access import (
+    PREDICTION_FEATURE,
+    grant_feature_access,
+    list_feature_access,
+    revoke_feature_access,
+)
 from services.symbols_service import (
     get_all_symbols_admin, toggle_symbol_active, toggle_symbol_popular,
     get_symbol_by_id, update_symbol, add_symbol,
@@ -45,6 +51,8 @@ class AdminStates(StatesGroup):
     sym_add_sector = State()
     sym_add_exchange = State()
     sym_add_currency = State()
+    prediction_grant_id = State()
+    prediction_revoke_id = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -179,6 +187,16 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_users_page(cq, int(data.split(":")[1]))
     elif data == "admin_health":
         await _admin_health(cq)
+    elif data == "admin_prediction_access":
+        await _admin_prediction_access(cq)
+    elif data == "admin_prediction_grant":
+        await state.set_state(AdminStates.prediction_grant_id)
+        await cq.message.edit_text("🔮 أرسل Telegram ID لإضافته لصلاحية الإشارات الخاصة:", reply_markup=back_button("admin_prediction_access"))
+        await cq.answer()
+    elif data == "admin_prediction_revoke":
+        await state.set_state(AdminStates.prediction_revoke_id)
+        await cq.message.edit_text("🔮 أرسل Telegram ID لحذف صلاحية الإشارات الخاصة:", reply_markup=back_button("admin_prediction_access"))
+        await cq.answer()
     elif data == "admin_symbols":
         await _admin_symbols_menu(cq)
     elif data.startswith("admin_sym_page:"):
@@ -391,6 +409,30 @@ async def _admin_stats(cq: CallbackQuery):
 async def _admin_health(cq: CallbackQuery):
     text = await build_admin_health_report()
     await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_prediction_access(cq: CallbackQuery):
+    access_items = await list_feature_access(PREDICTION_FEATURE)
+    lines = [
+        "🔮 صلاحيات الإشارات الخاصة",
+        "",
+        "المصرح لهم:",
+    ]
+    if access_items:
+        for item in access_items[:30]:
+            lines.append(f"• {item.telegram_id}")
+    else:
+        lines.append("لا يوجد مستخدمون مصرح لهم حالياً.")
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ إضافة مستخدم", callback_data="admin_prediction_grant")
+    builder.button(text="➖ حذف مستخدم", callback_data="admin_prediction_revoke")
+    builder.button(text="↩️ رجوع", callback_data="admin_panel")
+    builder.adjust(2, 1)
+    await cq.message.edit_text("\n".join(lines), reply_markup=builder.as_markup())
     await cq.answer()
 
 
@@ -981,6 +1023,41 @@ async def handle_sym_edit_value(msg: Message, state: FSMContext):
     s = await get_symbol_by_id(symbol_id)
     if s:
         await msg.answer(f"🔣 {s.symbol} - {s.name_ar}", reply_markup=back_button(f"admin_sym_market:{s.market}:1"))
+
+
+@router.message(AdminStates.prediction_grant_id)
+async def handle_prediction_grant_id(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        return
+    try:
+        telegram_id = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ أرسل Telegram ID صحيح.")
+        return
+
+    await grant_feature_access(telegram_id, PREDICTION_FEATURE, msg.from_user.id)
+    await log_admin(msg.from_user.id, f"prediction_grant_{telegram_id}")
+    await state.clear()
+    await msg.answer(f"✅ تم تفعيل الإشارات الخاصة للمستخدم {telegram_id}.", reply_markup=back_button("admin_prediction_access"))
+
+
+@router.message(AdminStates.prediction_revoke_id)
+async def handle_prediction_revoke_id(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        return
+    try:
+        telegram_id = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ أرسل Telegram ID صحيح.")
+        return
+
+    removed = await revoke_feature_access(telegram_id, PREDICTION_FEATURE)
+    await log_admin(msg.from_user.id, f"prediction_revoke_{telegram_id}")
+    await state.clear()
+    if removed:
+        await msg.answer(f"✅ تم حذف صلاحية الإشارات الخاصة من {telegram_id}.", reply_markup=back_button("admin_prediction_access"))
+    else:
+        await msg.answer("⚠️ المستخدم غير موجود في قائمة الصلاحيات.", reply_markup=back_button("admin_prediction_access"))
 
 
 @router.message(AdminStates.sym_add_symbol)

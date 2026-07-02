@@ -89,7 +89,7 @@ def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
+def section_menu(section: str, plan: str = "vip", private_signals: bool = False) -> InlineKeyboardMarkup:
     groups = {
         "analysis": [
             ("📊 فحص سريع", "scan_quick"),
@@ -141,7 +141,10 @@ def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
     }
 
     builder = InlineKeyboardBuilder()
-    for text, cb in groups.get(section, []):
+    items = list(groups.get(section, []))
+    if section == "analysis" and private_signals:
+        items.insert(0, ("🔮 الإشارات الخاصة", "private_prediction"))
+    for text, cb in items:
         builder.button(text=text, callback_data=cb)
     builder.button(text="↩️ رجوع", callback_data="main_menu")
     builder.adjust(2)
@@ -219,6 +222,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         ("🎫 الكوبونات", "admin_coupons"),
         ("📊 الإحصائيات", "admin_stats"),
         ("🩺 صحة النظام", "admin_health"),
+        ("🔮 صلاحيات التوقع", "admin_prediction_access"),
         ("⚙️ الإعدادات", "admin_settings"),
         ("📨 رسائل جماعية", "admin_broadcast"),
         ("📈 الأسواق", "admin_markets"),
