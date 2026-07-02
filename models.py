@@ -310,6 +310,8 @@ class PortfolioPosition(Base):
     market: Mapped[str] = mapped_column(String)
     entry_price: Mapped[float] = mapped_column(Float)
     quantity: Mapped[float] = mapped_column(Float)
+    target_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     side: Mapped[str] = mapped_column(String, default="long")
     status: Mapped[str] = mapped_column(String, default="open")
     exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -318,6 +320,26 @@ class PortfolioPosition(Base):
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
     user: Mapped["User"] = relationship("User", backref="portfolio_positions")
+
+
+class SavedOpportunity(Base):
+    __tablename__ = "saved_opportunities"
+    __table_args__ = (UniqueConstraint("user_id", "symbol", "market"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    symbol: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)
+    name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    entry_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    support: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    resistance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="watching")
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    user: Mapped["User"] = relationship("User", backref="saved_opportunities")
 
 
 class PriceTracker(Base):

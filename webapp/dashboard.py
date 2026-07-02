@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from config import settings
 from database import get_session
-from models import Alert, ErrorLog, PortfolioPosition, ScanLog, Symbol, User, Watchlist
+from models import Alert, ErrorLog, PortfolioPosition, SavedOpportunity, ScanLog, Symbol, User, Watchlist
 from services.dashboard_auth import verify_dashboard_token
 from services.market_data import YahooFinanceProvider, get_current_price_sync, get_ohlcv
 from services.scanner import TOP_SYMBOLS
@@ -83,13 +83,17 @@ def _portfolio_payload(item: PortfolioPosition) -> dict[str, Any]:
         current = None
 
     mark_price = current if current is not None else item.exit_price
-    pnl = pnl_pct = value = None
+    pnl = pnl_pct = value = target_distance_pct = stop_distance_pct = None
     if mark_price is not None:
         multiplier = -1 if item.side == "short" else 1
         pnl = (float(mark_price) - float(item.entry_price)) * float(item.quantity) * multiplier
         cost = abs(float(item.entry_price) * float(item.quantity))
         value = float(mark_price) * float(item.quantity)
         pnl_pct = (pnl / cost * 100) if cost else 0.0
+        if item.target_price:
+            target_distance_pct = ((float(item.target_price) - float(mark_price)) / float(mark_price)) * 100
+        if item.stop_loss:
+            stop_distance_pct = ((float(mark_price) - float(item.stop_loss)) / float(mark_price)) * 100
 
     return {
         "id": item.id,
@@ -97,6 +101,8 @@ def _portfolio_payload(item: PortfolioPosition) -> dict[str, Any]:
         "market": item.market,
         "entry_price": item.entry_price,
         "quantity": item.quantity,
+        "target_price": item.target_price,
+        "stop_loss": item.stop_loss,
         "side": item.side,
         "status": item.status,
         "exit_price": item.exit_price,
@@ -105,6 +111,33 @@ def _portfolio_payload(item: PortfolioPosition) -> dict[str, Any]:
         "value": value,
         "pnl": pnl,
         "pnl_pct": pnl_pct,
+        "target_distance_pct": target_distance_pct,
+        "stop_distance_pct": stop_distance_pct,
+    }
+
+
+def _saved_opportunity_payload(item: SavedOpportunity) -> dict[str, Any]:
+    current = None
+    try:
+        current = get_current_price_sync(item.symbol, item.market)
+    except Exception:
+        current = None
+    change_since_save = None
+    if current is not None and item.entry_price:
+        change_since_save = ((float(current) - float(item.entry_price)) / float(item.entry_price)) * 100
+    return {
+        "id": item.id,
+        "symbol": item.symbol,
+        "market": item.market,
+        "name": item.name or item.symbol,
+        "score": item.score,
+        "entry_price": item.entry_price,
+        "current_price": current,
+        "change_since_save": change_since_save,
+        "support": item.support,
+        "resistance": item.resistance,
+        "status": item.status,
+        "created_at": item.created_at.isoformat() if item.created_at else "",
     }
 
 
@@ -177,6 +210,14 @@ async def dashboard_summary(request: web.Request) -> web.Response:
                 .limit(50)
             )
         ).scalars().all()
+        saved_opportunities = (
+            await session.execute(
+                select(SavedOpportunity)
+                .where(SavedOpportunity.user_id == user.id)
+                .order_by(SavedOpportunity.created_at.desc())
+                .limit(30)
+            )
+        ).scalars().all()
         scans_today = (
             await session.execute(
                 select(func.count(ScanLog.id)).where(
@@ -216,6 +257,13 @@ async def dashboard_summary(request: web.Request) -> web.Response:
     open_positions = [item for item in portfolio_items if item["status"] == "open"]
     total_value = sum(float(item["value"] or 0) for item in open_positions)
     total_pnl = sum(float(item["pnl"] or 0) for item in open_positions)
+    closed_positions = [item for item in portfolio_items if item["status"] == "closed"]
+    winning_closed = [item for item in closed_positions if float(item["pnl"] or 0) > 0]
+    win_rate = (len(winning_closed) / len(closed_positions) * 100) if closed_positions else None
+    best_position = max(portfolio_items, key=lambda item: float(item["pnl"] or 0), default=None)
+    worst_position = min(portfolio_items, key=lambda item: float(item["pnl"] or 0), default=None)
+    saved_payload = [_saved_opportunity_payload(item) for item in saved_opportunities]
+    saved_winners = [item for item in saved_payload if float(item["change_since_save"] or 0) > 0]
 
     return _json(
         {
@@ -241,6 +289,15 @@ async def dashboard_summary(request: web.Request) -> web.Response:
                 "open_count": len(open_positions),
                 "total_value": total_value,
                 "total_pnl": total_pnl,
+                "closed_count": len(closed_positions),
+                "win_rate": win_rate,
+                "best": best_position,
+                "worst": worst_position,
+            },
+            "saved_opportunities": {
+                "items": saved_payload,
+                "count": len(saved_payload),
+                "winners": len(saved_winners),
             },
             "last_scans": [
                 {
@@ -528,8 +585,12 @@ async def dashboard_portfolio_action(request: web.Request) -> web.Response:
     try:
         entry_price = float(str(data.get("entry_price", "")).replace(",", ""))
         quantity = float(str(data.get("quantity", "")).replace(",", ""))
+        target_price = data.get("target_price")
+        stop_loss = data.get("stop_loss")
+        target_price = float(str(target_price).replace(",", "")) if str(target_price or "").strip() else None
+        stop_loss = float(str(stop_loss).replace(",", "")) if str(stop_loss or "").strip() else None
     except ValueError:
-        return _json({"ok": False, "message": "سعر الدخول والكمية لازم تكون أرقام"}, status=400)
+        return _json({"ok": False, "message": "سعر الدخول والكمية والهدف والوقف لازم تكون أرقام"}, status=400)
 
     if entry_price <= 0 or quantity <= 0:
         return _json({"ok": False, "message": "سعر الدخول والكمية لازم تكون أكبر من صفر"}, status=400)
@@ -541,6 +602,8 @@ async def dashboard_portfolio_action(request: web.Request) -> web.Response:
             market=market,
             entry_price=entry_price,
             quantity=quantity,
+            target_price=target_price,
+            stop_loss=stop_loss,
             side=side,
             note=note,
         )
@@ -549,6 +612,71 @@ async def dashboard_portfolio_action(request: web.Request) -> web.Response:
         await session.refresh(position)
 
     return _json({"ok": True, "message": "تمت إضافة الصفقة", "position": _portfolio_payload(position)})
+
+
+async def dashboard_saved_opportunity_action(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+
+    data = await _request_json(request)
+    action = str(data.get("action", "save")).strip().lower()
+    if action == "remove":
+        try:
+            item_id = int(data.get("id"))
+        except (TypeError, ValueError):
+            return _json({"ok": False, "message": "رقم الفرصة غير صالح"}, status=400)
+        async with get_session() as session:
+            item = await session.get(SavedOpportunity, item_id)
+            if not item or item.user_id != user.id:
+                return _json({"ok": False, "message": "الفرصة غير موجودة"}, status=404)
+            await session.delete(item)
+            await session.commit()
+        return _json({"ok": True, "message": "تم حذف الفرصة"})
+
+    symbol = str(data.get("symbol", "")).strip().upper()
+    market = str(data.get("market", "")).strip().upper()
+    if not symbol or market not in {"SAUDI", "US", "CRYPTO"}:
+        return _json({"ok": False, "message": "رمز أو سوق غير صالح"}, status=400)
+
+    def _optional_float(key: str):
+        value = data.get(key)
+        if value in (None, ""):
+            return None
+        try:
+            return float(str(value).replace(",", ""))
+        except ValueError:
+            return None
+
+    async with get_session() as session:
+        existing = (
+            await session.execute(
+                select(SavedOpportunity).where(
+                    SavedOpportunity.user_id == user.id,
+                    SavedOpportunity.symbol == symbol,
+                    SavedOpportunity.market == market,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return _json({"ok": True, "message": "الفرصة محفوظة بالفعل", "item": _saved_opportunity_payload(existing)})
+
+        item = SavedOpportunity(
+            user_id=user.id,
+            symbol=symbol,
+            market=market,
+            name=str(data.get("name") or symbol)[:120],
+            score=_optional_float("score"),
+            entry_price=_optional_float("entry_price"),
+            support=_optional_float("support"),
+            resistance=_optional_float("resistance"),
+            note=str(data.get("note") or "")[:180],
+        )
+        session.add(item)
+        await session.commit()
+        await session.refresh(item)
+
+    return _json({"ok": True, "message": "تم حفظ الفرصة", "item": _saved_opportunity_payload(item)})
 
 
 async def dashboard_health(request: web.Request) -> web.Response:
@@ -566,6 +694,7 @@ def create_dashboard_app() -> web.Application:
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/watchlist", dashboard_watchlist_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/alerts", dashboard_alert_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/portfolio", dashboard_portfolio_action)
+    app.router.add_post("/api/dashboard/{telegram_id}/{token}/opportunities", dashboard_saved_opportunity_action)
     return app
 
 
@@ -804,6 +933,7 @@ DASHBOARD_HTML = r"""
               <div class="action-row">
                 <button class="primary" id="add-watch">إضافة للقائمة</button>
                 <button class="warn" id="remove-watch">حذف من القائمة</button>
+                <button id="save-opportunity">حفظ فرصة</button>
                 <select class="mini-select" id="alert-type">
                   <option value="price_above">السعر فوق</option>
                   <option value="price_below">السعر تحت</option>
@@ -837,6 +967,10 @@ DASHBOARD_HTML = r"""
             </div>
           </div>
           <div class="panel">
+            <h2>ملخص VIP اليوم</h2>
+            <div id="vip-brief" class="status">جاري تجهيز الملخص...</div>
+          </div>
+          <div class="panel">
             <h2>قائمتي</h2>
             <div id="watchlist" class="status">جاري التحميل...</div>
           </div>
@@ -854,6 +988,8 @@ DASHBOARD_HTML = r"""
             <div class="portfolio-form">
               <input id="pf-entry" inputmode="decimal" placeholder="سعر الدخول" />
               <input id="pf-qty" inputmode="decimal" placeholder="الكمية" />
+              <input id="pf-target" inputmode="decimal" placeholder="الهدف" />
+              <input id="pf-stop" inputmode="decimal" placeholder="وقف الخسارة" />
               <select id="pf-side">
                 <option value="long">شراء</option>
                 <option value="short">بيع</option>
@@ -863,6 +999,15 @@ DASHBOARD_HTML = r"""
             </div>
             <div class="feedback" id="portfolio-feedback"></div>
             <div id="portfolio" class="status">جاري التحميل...</div>
+          </div>
+          <div class="panel">
+            <h2>سجل الفرص</h2>
+            <div class="portfolio-summary">
+              <div><div class="muted small">محفوظة</div><strong id="opp-count">-</strong></div>
+              <div><div class="muted small">رابحة</div><strong id="opp-winners">-</strong></div>
+              <div><div class="muted small">أفضل تغير</div><strong id="opp-best">-</strong></div>
+            </div>
+            <div id="saved-opportunities" class="status">جاري التحميل...</div>
           </div>
           <div class="panel">
             <h2>آخر نشاط</h2>
@@ -988,6 +1133,7 @@ DASHBOARD_HTML = r"""
         return `<div class="scan-row">
           <div class="row-top"><span class="name">${p.symbol}</span><span class="${cls}">${fmt(p.pnl, 2)} (${fmt(p.pnl_pct, 2)}%)</span></div>
           <div class="row-top"><span class="muted">${marketName(p.market)} | دخول ${fmt(p.entry_price, 4)} | كمية ${fmt(p.quantity, 4)} | ${status}</span>${closeBtn}</div>
+          <div class="muted small">هدف ${p.target_price ? fmt(p.target_price, 4) : "-"} | وقف ${p.stop_loss ? fmt(p.stop_loss, 4) : "-"}</div>
           ${p.note ? `<div class="muted small">${p.note}</div>` : ""}
         </div>`;
       }).join("");
@@ -995,6 +1141,67 @@ DASHBOARD_HTML = r"""
       [...box.querySelectorAll("[data-close]")].forEach((btn) => {
         btn.addEventListener("click", () => closePosition(Number(btn.dataset.close)));
       });
+    }
+
+    function renderSavedOpportunities(saved) {
+      const box = document.getElementById("saved-opportunities");
+      const items = saved?.items || [];
+      document.getElementById("opp-count").textContent = saved?.count ?? 0;
+      document.getElementById("opp-winners").textContent = saved?.winners ?? 0;
+      const best = items.length ? Math.max(...items.map(x => Number(x.change_since_save || 0))) : 0;
+      const bestEl = document.getElementById("opp-best");
+      bestEl.textContent = `${fmt(best, 2)}%`;
+      bestEl.className = best >= 0 ? "up" : "down";
+
+      if (!items.length) {
+        box.textContent = "لا توجد فرص محفوظة";
+        return;
+      }
+
+      box.innerHTML = items.slice(0, 10).map((item) => {
+        const cls = Number(item.change_since_save || 0) >= 0 ? "up" : "down";
+        return `<div class="symbol-row" data-opp="${item.id}" data-symbol="${item.symbol}" data-market="${item.market}" data-name="${item.name}">
+          <div class="row-top"><span class="name">${item.name || item.symbol}</span><span class="${cls}">${fmt(item.change_since_save, 2)}%</span></div>
+          <div class="row-top"><span class="muted">${item.symbol} | ${marketName(item.market)} | حفظ ${fmt(item.entry_price, 4)}</span><button class="tiny-btn" data-remove-opp="${item.id}">حذف</button></div>
+        </div>`;
+      }).join("");
+
+      [...box.querySelectorAll("[data-symbol]")].forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (event.target.closest("[data-remove-opp]")) return;
+          selectSymbol({
+            symbol: row.dataset.symbol,
+            market: row.dataset.market,
+            name_ar: row.dataset.name,
+            name_en: row.dataset.name,
+          });
+        });
+      });
+      [...box.querySelectorAll("[data-remove-opp]")].forEach((btn) => {
+        btn.addEventListener("click", () => removeSavedOpportunity(Number(btn.dataset.removeOpp)));
+      });
+    }
+
+    function renderVipBrief(summary, radarItems = []) {
+      const box = document.getElementById("vip-brief");
+      const portfolio = summary?.portfolio || {};
+      const best = radarItems.slice(0, 3);
+      const pnl = Number(portfolio.total_pnl || 0);
+      const pnlClass = pnl >= 0 ? "up" : "down";
+      const alertsCount = summary?.alerts?.filter(a => a.is_active).length || 0;
+      box.innerHTML = `
+        <div class="scan-row">
+          <div class="row-top"><span class="name">أفضل الفرص</span><span class="score">${best.length}</span></div>
+          <span class="muted">${best.map(x => x.symbol).join(" | ") || "تظهر بعد تشغيل الرادار"}</span>
+        </div>
+        <div class="scan-row">
+          <div class="row-top"><span class="name">المحفظة</span><span class="${pnlClass}">${fmt(pnl, 2)}</span></div>
+          <span class="muted">صفقات مفتوحة ${portfolio.open_count || 0} | تنبيهات نشطة ${alertsCount}</span>
+        </div>
+        <div class="scan-row">
+          <span class="muted">افتح فرصة من الرادار، احفظها، ثم حط هدف ووقف للصفقة عشان تتابعها يومياً.</span>
+        </div>
+      `;
     }
 
     function selectSymbol(symbol) {
@@ -1050,6 +1257,8 @@ DASHBOARD_HTML = r"""
       renderWatchlist(data.watchlist);
       renderAlerts(data.alerts);
       renderPortfolio(data.portfolio);
+      renderSavedOpportunities(data.saved_opportunities);
+      renderVipBrief(data, []);
 
       document.getElementById("last-scans").innerHTML = data.last_scans.length ? data.last_scans.map(s =>
         `<div class="scan-row"><div class="row-top"><span class="name">${s.symbol}</span><span class="score">${fmt(s.score, 0)}/100</span></div><span class="muted">${s.signal || marketName(s.market)}</span></div>`
@@ -1063,6 +1272,8 @@ DASHBOARD_HTML = r"""
       const box = document.getElementById("radar");
       try {
         const data = await getJson(`${root}/radar`);
+        const summary = await getJson(`${root}/summary`).catch(() => null);
+        if (summary) renderVipBrief(summary, data.items || []);
         const best = data.items[0];
         const bestHtml = best ? `<div class="highlight" data-symbol="${best.symbol}" data-market="${best.market}" data-name="${best.name || best.symbol}">
           <div class="row-top"><span class="name">فرصة اليوم: ${best.name || best.symbol}</span><span class="score">${best.score}/100</span></div>
@@ -1112,6 +1323,8 @@ DASHBOARD_HTML = r"""
         if (!document.getElementById("pf-entry").value && data.last_price) {
           document.getElementById("pf-entry").placeholder = `سعر الدخول - الحالي ${fmt(data.last_price, 4)}`;
         }
+        document.getElementById("pf-target").placeholder = data.resistance ? `الهدف - مقاومة ${fmt(data.resistance, 4)}` : "الهدف";
+        document.getElementById("pf-stop").placeholder = data.support ? `الوقف - دعم ${fmt(data.support, 4)}` : "وقف الخسارة";
       } catch (err) {
         document.getElementById("chart-status").textContent = "تعذر تحميل الشارت";
       }
@@ -1152,6 +1365,8 @@ DASHBOARD_HTML = r"""
         renderWatchlist(data.watchlist);
         renderAlerts(data.alerts);
         renderPortfolio(data.portfolio);
+        renderSavedOpportunities(data.saved_opportunities);
+        renderVipBrief(data, []);
       } catch (err) {}
     }
 
@@ -1221,6 +1436,8 @@ DASHBOARD_HTML = r"""
     async function addPosition() {
       const entry = document.getElementById("pf-entry").value.trim() || latestChartData.last_price;
       const quantity = document.getElementById("pf-qty").value.trim();
+      const target = document.getElementById("pf-target").value.trim();
+      const stop = document.getElementById("pf-stop").value.trim();
       const side = document.getElementById("pf-side").value;
       const note = document.getElementById("pf-note").value.trim();
       if (!entry || !quantity) {
@@ -1235,12 +1452,16 @@ DASHBOARD_HTML = r"""
           market: currentSymbol.market,
           entry_price: entry,
           quantity,
+          target_price: target,
+          stop_loss: stop,
           side,
           note,
         });
         setPortfolioFeedback(data.message || "تمت إضافة الصفقة");
         document.getElementById("pf-entry").value = "";
         document.getElementById("pf-qty").value = "";
+        document.getElementById("pf-target").value = "";
+        document.getElementById("pf-stop").value = "";
         document.getElementById("pf-note").value = "";
         await refreshSummaryPanels();
       } catch (err) {
@@ -1256,6 +1477,37 @@ DASHBOARD_HTML = r"""
         await refreshSummaryPanels();
       } catch (err) {
         setPortfolioFeedback(err.message);
+      }
+    }
+
+    async function saveCurrentOpportunity() {
+      setFeedback("جاري حفظ الفرصة...");
+      try {
+        const data = await postJson(`${root}/opportunities`, {
+          action: "save",
+          symbol: currentSymbol.symbol,
+          market: currentSymbol.market,
+          name: currentSymbol.name_ar || currentSymbol.name_en || currentSymbol.symbol,
+          score: latestChartData.score || "",
+          entry_price: latestChartData.last_price || "",
+          support: latestChartData.support || "",
+          resistance: latestChartData.resistance || "",
+        });
+        setFeedback(data.message || "تم حفظ الفرصة");
+        await refreshSummaryPanels();
+      } catch (err) {
+        setFeedback(err.message);
+      }
+    }
+
+    async function removeSavedOpportunity(id) {
+      setFeedback("جاري حذف الفرصة...");
+      try {
+        const data = await postJson(`${root}/opportunities`, { action: "remove", id });
+        setFeedback(data.message || "تم الحذف");
+        await refreshSummaryPanels();
+      } catch (err) {
+        setFeedback(err.message);
       }
     }
 
@@ -1282,6 +1534,7 @@ DASHBOARD_HTML = r"""
 
     document.getElementById("add-watch").addEventListener("click", addCurrentToWatchlist);
     document.getElementById("remove-watch").addEventListener("click", removeCurrentFromWatchlist);
+    document.getElementById("save-opportunity").addEventListener("click", saveCurrentOpportunity);
     document.getElementById("create-alert").addEventListener("click", createCurrentAlert);
     document.getElementById("add-position").addEventListener("click", addPosition);
     document.getElementById("smart-resistance").addEventListener("click", () =>
