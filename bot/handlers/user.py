@@ -9,6 +9,7 @@ from models import User, MarketSettings
 from config import settings
 from bot.keyboards.main import (
     main_menu, market_menu, scan_type_menu, profile_menu, back_button, daily_report_menu,
+    section_menu,
     symbol_browser_menu, sectors_menu, symbol_list_menu, symbol_detail_menu,
 )
 from utils.formatter import format_profile, format_technical_report
@@ -321,6 +322,27 @@ async def cb_main_menu(callback: CallbackQuery):
         "اختر من القائمة أدناه:"
     )
     await callback.message.edit_text(text, reply_markup=main_menu(plan))
+
+
+@router.callback_query(F.data.startswith("menu:"))
+async def cb_section_menu(callback: CallbackQuery):
+    await callback.answer()
+    section = callback.data.split(":", 1)[1]
+    user = await _get_user(callback.from_user.id)
+    plan = user.plan if user else "free"
+    if user and user.telegram_id in settings.admin_ids:
+        plan = "vip"
+
+    titles = {
+        "analysis": "📊 التحليل والفحص\n\nاختر طريقة الوصول للتحليل:",
+        "markets": "🌍 الأسواق\n\nاختر السوق أو النظرة التي تريدها:",
+        "watch": "🔔 المتابعة والتنبيهات\n\nإدارة قائمتك وتنبيهاتك:",
+        "reports": "📈 التقارير والفرص\n\nملخصات وفرص جاهزة للمتابعة:",
+        "tools": "🧰 أدوات احترافية\n\nأدوات تساعدك تقارن وتحسب وتفلتر:",
+        "account": "👤 حسابي والدعم\n\nإدارة الاشتراك والحساب والتواصل:",
+    }
+    text = titles.get(section, "القائمة")
+    await callback.message.edit_text(text, reply_markup=section_menu(section, plan))
 
 
 @router.callback_query(F.data.in_({"market:saudi", "market:us", "market:crypto"}))

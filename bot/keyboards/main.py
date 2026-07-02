@@ -80,10 +80,76 @@ def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
     allowed = PLAN_FEATURES.get(plan, PLAN_FEATURES["free"])
 
     builder = InlineKeyboardBuilder()
-    for text, cb in ALL_BUTTONS:
+    if "scan_quick" in allowed:
+        builder.button(text="📊 التحليل والفحص", callback_data="menu:analysis")
+    if any(item in allowed for item in ("market:saudi", "market:us", "market:crypto", "market_overview", "heatmap")):
+        builder.button(text="🌍 الأسواق", callback_data="menu:markets")
+    if any(item in allowed for item in ("my_watchlist", "my_alerts", "price_trackers", "my_news_alerts")):
+        builder.button(text="🔔 المتابعة والتنبيهات", callback_data="menu:watch")
+    if any(item in allowed for item in ("daily_reports", "top_readings", "news_menu", "my_stats")):
+        builder.button(text="📈 التقارير والفرص", callback_data="menu:reports")
+    if any(item in allowed for item in ("compare", "screener_menu", "fib_menu", "risk_calc", "fear_greed", "rs_compare")):
+        builder.button(text="🧰 أدوات احترافية", callback_data="menu:tools")
+    builder.button(text="👤 حسابي والدعم", callback_data="menu:account")
+    builder.adjust(2, 2, 1)
+    return builder.as_markup()
+
+
+def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
+    allowed = PLAN_FEATURES.get(plan, PLAN_FEATURES["free"])
+    groups = {
+        "analysis": [
+            ("📊 فحص سريع", "scan_quick"),
+            ("🔍 تصفح الرموز", "symbol_browser"),
+            ("📉 الشارت", "chart_menu"),
+            ("🔄 تحليل متعدد الفريمات", "mtf_scan"),
+            ("🚀 إشارات VIP", "vip_signals"),
+        ],
+        "markets": [
+            ("📈 السوق السعودي", "market:saudi"),
+            ("🇺🇸 السوق الأمريكي", "market:us"),
+            ("₿ العملات الرقمية", "market:crypto"),
+            ("📊 حالة السوق", "market_overview"),
+            ("🗺️ الخريطة الحرارية", "heatmap"),
+            ("🏢 أداء القطاعات", "sector_performance"),
+        ],
+        "watch": [
+            ("⭐ قائمتي", "my_watchlist"),
+            ("🔔 تنبيهاتي", "my_alerts"),
+            ("🎯 تتبع الأسعار", "price_trackers"),
+            ("📢 أخبار رموزي", "my_news_alerts"),
+        ],
+        "reports": [
+            ("📅 التقارير اليومية", "daily_reports"),
+            ("🏆 أقوى القراءات", "top_readings"),
+            ("📰 أخبار السوق", "news_menu"),
+            ("📊 إحصائياتي", "my_stats"),
+            ("📥 تصدير سجلي", "export_history"),
+        ],
+        "tools": [
+            ("📊 مقارنة", "compare"),
+            ("🔍 فاحص السوق", "screener_menu"),
+            ("📐 فيبوناتشي", "fib_menu"),
+            ("📊 حاسبة المخاطر", "risk_calc"),
+            ("😱 الخوف والطمع", "fear_greed"),
+            ("💪 مقارنة القوة", "rs_compare"),
+        ],
+        "account": [
+            ("👤 حسابي", "my_profile"),
+            ("💳 الاشتراك", "subscription"),
+            ("🎫 تذكرة دعم", "support_ticket"),
+            ("🛠 الدعم", "support"),
+            ("📋 المساعدة", "help"),
+            ("⚖️ الشروط والأحكام", "terms"),
+        ],
+    }
+
+    builder = InlineKeyboardBuilder()
+    for text, cb in groups.get(section, []):
         cb_key = cb.split(":")[0] + ":*" if ":" in cb else cb
         if cb in allowed or cb_key in allowed:
             builder.button(text=text, callback_data=cb)
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -95,6 +161,17 @@ def market_menu() -> InlineKeyboardMarkup:
     builder.button(text="₿ العملات الرقمية", callback_data="market:crypto")
     builder.button(text="↩️ رجوع", callback_data="main_menu")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def chart_market_menu() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📈 السعودي", callback_data="chart:saudi")
+    builder.button(text="🇺🇸 الأمريكي", callback_data="chart:us")
+    builder.button(text="₿ الكريبتو", callback_data="chart:crypto")
+    builder.button(text="🔍 تصفح الرموز", callback_data="symbol_browser")
+    builder.button(text="↩️ رجوع", callback_data="menu:analysis")
+    builder.adjust(2, 1, 1)
     return builder.as_markup()
 
 

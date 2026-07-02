@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from services.chart_generator import generate_chart
 from utils.validators import is_valid_symbol
 from bot.keyboards.main import (
-    market_menu, timeframe_menu, back_button, symbol_actions,
+    chart_market_menu, timeframe_menu, back_button, symbol_actions,
 )
 
 from . import _user_context
@@ -27,8 +27,11 @@ MARKET_DISPLAY = {
 async def cb_chart_menu(callback: CallbackQuery):
     await callback.answer()
     _user_context[callback.from_user.id] = {"context": "chart"}
-    text = "📉 اختر السوق لعرض الشارت:"
-    await callback.message.edit_text(text, reply_markup=market_menu())
+    text = (
+        "📉 مركز الشارت\n\n"
+        "اختر السوق، ثم اكتب الرمز واختر الفريم. الشارت يعرض الشموع، المتوسطات، الدعم، المقاومة، والحجم."
+    )
+    await callback.message.edit_text(text, reply_markup=chart_market_menu())
 
 
 @router.callback_query(F.data.startswith("chart:"))
@@ -40,14 +43,20 @@ async def cb_chart_symbol(callback: CallbackQuery):
         market = MARKET_MAP.get(market_key, market_key.upper())
         _user_context[callback.from_user.id] = {"context": "chart", "market": market}
         market_name = MARKET_DISPLAY.get(market, market)
-        text = f"📉 أدخل رمز الأصل المالي للرسم البياني في {market_name}:\nمثال: 2222.SR للسعودي، AAPL للأمريكي، BTCUSDT للكريبتو"
+        text = (
+            f"📉 شارت {market_name}\n\n"
+            "أرسل رمز الأصل المالي:\n"
+            "• السعودي: 2222.SR\n"
+            "• الأمريكي: AAPL\n"
+            "• الكريبتو: BTCUSDT"
+        )
         await callback.message.edit_text(text, reply_markup=back_button("chart_menu"))
     elif len(parts) == 3:
         symbol = parts[1].upper()
         market_key = parts[2].lower()
         market = MARKET_MAP.get(market_key, market_key.upper())
         kb = timeframe_menu(market_key, f"chart_gen:{symbol}:{market}")
-        text = f"📉 اختر الإطار الزمني للرسم البياني لـ {symbol}:"
+        text = f"📉 اختر الفريم المناسب لـ {symbol}:"
         await callback.message.edit_text(text, reply_markup=kb)
 
 
@@ -59,23 +68,30 @@ async def cb_chart_generate(callback: CallbackQuery):
     market = parts[2]
     timeframe = parts[3]
 
-    await callback.message.edit_text(f"جاري إنشاء الرسم البياني لـ {symbol}... 📊")
+    await callback.message.edit_text(f"📊 جاري تجهيز شارت {symbol} على فريم {timeframe}...")
 
     try:
         import asyncio
         from services.chart_generator import generate_chart
+        from services.symbols_service import get_symbol_info
         from aiogram.types import BufferedInputFile
         from loguru import logger
 
+        info = await get_symbol_info(symbol, market)
+        name = info["name_ar"] if info else symbol
         chart_result = await asyncio.to_thread(
-            generate_chart, symbol, market, timeframe
+            generate_chart, symbol, market, timeframe, name
         )
 
         if chart_result:
             chart_bytes, chart_caption = chart_result
             market_key = {"SAUDI": "saudi", "US": "us", "CRYPTO": "crypto"}.get(market, "us")
             kb = symbol_actions(symbol, market_key)
-            caption = f"📉 {symbol} - {MARKET_DISPLAY.get(market, market)} ({timeframe})"
+            caption = (
+                f"📉 {name} — {symbol}\n"
+                f"السوق: {MARKET_DISPLAY.get(market, market)} | الفريم: {timeframe}\n"
+                "الخطوط: EMA20 / EMA50 / الدعم / المقاومة"
+            )
             photo = BufferedInputFile(chart_bytes, filename=f"{symbol}_{timeframe}.png")
             await callback.message.delete()
             await callback.message.answer_photo(photo, caption=caption, reply_markup=kb)
@@ -86,7 +102,7 @@ async def cb_chart_generate(callback: CallbackQuery):
             )
     except Exception:
         await callback.message.edit_text(
-            f"{caption}\n\n⚠️ تعذر إرسال الشارت. حاول مرة أخرى.",
+            f"⚠️ تعذر إرسال شارت {symbol}. حاول مرة أخرى أو جرّب فريم مختلف.",
             reply_markup=back_button("chart_menu"),
         )
 
@@ -101,13 +117,13 @@ async def handle_chart_symbol_input(message: Message):
     symbol = message.text.strip().upper()
 
     if not is_valid_symbol(symbol):
-        await message.answer("❌ رمز الأصل غير صالح. أدخل رمزاً صحيحاً (مثال: 2222.SR، AAPL، BTCUSDT)")
+        await message.answer("❌ الرمز غير صالح. جرّب مثل: 2222.SR أو AAPL أو BTCUSDT")
         return
 
     market_key = {"SAUDI": "saudi", "US": "us", "CRYPTO": "crypto"}.get(market, "us")
     kb = timeframe_menu(market_key, f"chart_gen:{symbol}:{market}")
 
-    text = f"📉 اختر الإطار الزمني للرسم البياني لـ {symbol}:"
+    text = f"📉 اختر الفريم المناسب لـ {symbol}:"
     await message.answer(text, reply_markup=kb)
 
     _user_context[telegram_id] = {"context": "chart", "market": market, "symbol": symbol}
