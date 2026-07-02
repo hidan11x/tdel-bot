@@ -18,7 +18,7 @@ router = Router()
 async def cb_compare_start(callback: CallbackQuery):
     await callback.answer()
     _user_context[callback.from_user.id] = {"context": "compare_first"}
-    text = "📊 **المقارنة الفنية**\n\nأدخل رمز الأصل الأول:"
+    text = "📊 **المقارنة الفنية**\n\nأدخل اسم أو رمز الأصل الأول:\nمثال: الراجحي، أبل، بيتكوين، 1120.SR"
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 
 
@@ -27,14 +27,14 @@ async def cb_compare_add(callback: CallbackQuery):
     await callback.answer()
     symbol = callback.data.split(":", 1)[1]
     _user_context[callback.from_user.id] = {"context": "compare_second", "compare_first": symbol}
-    text = f"📊 **المقارنة الفنية**\n\nالأصل الأول: {symbol}\nأدخل رمز الأصل الثاني:"
+    text = f"📊 **المقارنة الفنية**\n\nالأصل الأول: {symbol}\nأدخل اسم أو رمز الأصل الثاني:"
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 
 
-async def _do_compare(message: Message, symbol1: str, symbol2: str, market: str = None):
+async def _do_compare(message: Message, symbol1: str, symbol2: str, market1: str = None, market2: str = None):
     await message.answer("🔄 جاري تحليل الأصول للمقارنة...")
-    r1 = await scan_symbol(symbol1, market or "SAUDI")
-    r2 = await scan_symbol(symbol2, market or "SAUDI")
+    r1 = await scan_symbol(symbol1, market1 or "SAUDI")
+    r2 = await scan_symbol(symbol2, market2 or market1 or "SAUDI")
     if not r1 and not r2:
         await message.answer("❌ تعذر تحليل كلا الأصلين.", reply_markup=back_button("main_menu"))
         return
@@ -68,12 +68,28 @@ async def _do_compare(message: Message, symbol1: str, symbol2: str, market: str 
 async def handle_compare_input(message: Message):
     ctx = _user_context.get(message.from_user.id, {})
     context_type = ctx.get("context")
-    symbol_input = message.text.strip().upper()
+    raw_input = message.text.strip()
+    from services.search_engine import auto_detect_symbol
+    detected = await auto_detect_symbol(raw_input)
+    if detected:
+        symbol_input = detected["symbol"]
+        market_input = detected["market"]
+        name = detected.get("name_ar") or detected.get("name_en") or symbol_input
+    else:
+        symbol_input = raw_input.upper()
+        market_input = "SAUDI" if symbol_input.endswith(".SR") else ("CRYPTO" if symbol_input.endswith("USDT") else "US")
+        name = symbol_input
+
     if context_type == "compare_first":
-        _user_context[message.from_user.id] = {"context": "compare_second", "compare_first": symbol_input}
-        await message.answer(f"📊 الأصل الأول: {symbol_input}\nأدخل رمز الأصل الثاني:", reply_markup=back_button("main_menu"))
+        _user_context[message.from_user.id] = {
+            "context": "compare_second",
+            "compare_first": symbol_input,
+            "compare_first_market": market_input,
+        }
+        await message.answer(f"📊 الأصل الأول: {name} ({symbol_input})\nأدخل اسم أو رمز الأصل الثاني:", reply_markup=back_button("main_menu"))
     elif context_type == "compare_second":
         symbol1 = ctx.get("compare_first", "")
+        market1 = ctx.get("compare_first_market", "SAUDI")
         symbol2 = symbol_input
         _user_context.pop(message.from_user.id, None)
-        await _do_compare(message, symbol1, symbol2)
+        await _do_compare(message, symbol1, symbol2, market1, market_input)

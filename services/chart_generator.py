@@ -145,6 +145,13 @@ def generate_chart(
             df["BB_Middle"] = np.nan
             df["BB_Lower"] = np.nan
 
+        try:
+            import pandas_ta as pta
+            rsi = pta.rsi(pd.Series(closes), length=14)
+            df["RSI"] = rsi.values[:len(df)] if rsi is not None else np.nan
+        except Exception:
+            df["RSI"] = np.nan
+
         support, resistance = find_support_resistance(closes, lookback=20)
 
         vol_series = df["Volume"].dropna()
@@ -181,6 +188,11 @@ def generate_chart(
             apds.append(mpf.make_addplot(df["BB_Upper"], color="#42A5F5", width=0.7, alpha=0.5))
         if not df["BB_Lower"].isna().all():
             apds.append(mpf.make_addplot(df["BB_Lower"], color="#42A5F5", width=0.7, alpha=0.5))
+
+        if not df["RSI"].isna().all():
+            apds.append(mpf.make_addplot(df["RSI"], panel=2, color="#FFA726", width=1.2, ylabel="RSI"))
+            apds.append(mpf.make_addplot([70] * len(df), panel=2, color="#EF5350", width=0.7, linestyle="--"))
+            apds.append(mpf.make_addplot([30] * len(df), panel=2, color="#66BB6A", width=0.7, linestyle="--"))
 
         hlines = []
         hlines_colors = []
@@ -232,6 +244,9 @@ def generate_chart(
             datetime_format="%Y-%m-%d",
             scale_padding={"left": 0.1, "right": 1.0, "top": 1.5, "bottom": 0.3},
         )
+
+        if not df["RSI"].isna().all():
+            kwargs["panel_ratios"] = (5, 1.4, 1.2)
 
         if apds:
             kwargs["addplot"] = apds

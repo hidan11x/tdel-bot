@@ -730,7 +730,7 @@ async def _auto_search(message: Message, query: str):
             await msg.edit_text(text, reply_markup=kb)
             return
 
-    if detected and detected.get("source") in ("db", "crypto_map", "pattern"):
+    if detected and detected.get("source") in ("db", "db_fuzzy", "common_alias", "crypto_map", "pattern"):
         symbol = detected["symbol"]
         market = detected["market"]
         name = detected.get("name_ar") or detected.get("name_en") or symbol
@@ -802,6 +802,9 @@ async def handle_text_input(message: Message):
             return
         elif context_type == "mtf_scan":
             await handle_mtf_scan_input(message)
+            return
+        elif context_type == "vip_symbol":
+            await handle_vip_symbol_input(message)
             return
         elif context_type == "fib_scan":
             await handle_fib_input(message)
@@ -924,6 +927,63 @@ async def handle_mtf_scan_input(message: Message):
         await message.answer(text[:4000], reply_markup=back_button("main_menu"))
     except Exception:
         await message.answer("❌ حدث خطأ أثناء التحليل.", reply_markup=back_button("main_menu"))
+
+
+async def handle_vip_symbol_input(message: Message):
+    telegram_id = message.from_user.id
+    ctx = _user_context.get(telegram_id)
+    if not ctx or ctx.get("context") != "vip_symbol":
+        return
+
+    raw = message.text.strip()
+    _user_context.pop(telegram_id, None)
+
+    detected = await auto_detect_symbol(raw)
+    if not detected:
+        await message.answer(
+            "❌ ما قدرت أتعرف على الاسم أو الرمز.\nجرّب: الراجحي، أبل، بيتكوين، 1120.SR، AAPL",
+            reply_markup=back_button("vip_signals"),
+        )
+        return
+
+    symbol = detected["symbol"]
+    market = detected["market"]
+    name = detected.get("name_ar") or detected.get("name_en") or symbol
+    await message.answer(f"🚀 جاري تجهيز تحليل VIP لـ {name} ({symbol})...")
+
+    try:
+        from services.scanner import scan_symbol_multi_timeframe
+        from services.signal_engine import build_signal, format_signal_message
+        from services.patterns import detect_all_patterns, format_patterns
+
+        mtf = await scan_symbol_multi_timeframe(symbol, market)
+        if not mtf:
+            await message.answer("❌ تعذر الحصول على بيانات كافية.", reply_markup=back_button("vip_signals"))
+            return
+
+        best_tf = mtf.get("best_timeframe", "1d")
+        best_result = mtf.get("timeframes", {}).get(best_tf)
+        if not best_result:
+            await message.answer("❌ تعذر تحديد أفضل فريم للتحليل.", reply_markup=back_button("vip_signals"))
+            return
+
+        signal = build_signal(best_result)
+        report = format_signal_message(signal)
+
+        closes = best_result.get("closes") or []
+        if closes:
+            patterns = detect_all_patterns(closes)
+            if patterns:
+                report += "\n\n" + format_patterns(patterns)
+
+        summary = (
+            f"🚀 تحليل VIP\n"
+            f"أفضل فريم: {best_tf}\n"
+            f"توافق الفريمات: {mtf.get('confidence', 0)}/100\n\n"
+        )
+        await message.answer((summary + report)[:4000], reply_markup=back_button("vip_signals"))
+    except Exception:
+        await message.answer("❌ حدث خطأ أثناء تحليل VIP.", reply_markup=back_button("vip_signals"))
 
 
 async def handle_fib_input(message: Message):

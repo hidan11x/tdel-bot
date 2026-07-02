@@ -231,7 +231,11 @@ async def cb_watchlist_add(callback: CallbackQuery):
     _user_context[callback.from_user.id] = {"context": "watchlist_add", "market": market}
     from utils.formatter import MARKET_NAMES
     market_name = MARKET_NAMES.get(market, market)
-    text = f"⭐ أدخل رمز الأصل المالي لإضافته إلى قائمة المتابعة في {market_name}:"
+    text = (
+        f"⭐ أضف إلى قائمة المتابعة في {market_name}\n\n"
+        "اكتب اسم أو رمز الأصل المالي:\n"
+        "مثال: الراجحي، أبل، بيتكوين، 1120.SR، AAPL"
+    )
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 
 
@@ -245,8 +249,16 @@ async def handle_watchlist_symbol_input(message: Message):
     symbol = message.text.strip().upper()
 
     if not is_valid_symbol(symbol):
-        await message.answer("❌ رمز الأصل غير صالح. أدخل رمزاً صحيحاً (مثال: 2222.SR، AAPL، BTCUSDT)")
-        return
+        from services.search_engine import auto_detect_symbol
+        detected = await auto_detect_symbol(message.text.strip())
+        if detected:
+            symbol = detected["symbol"]
+            market = detected["market"]
+            name = detected.get("name_ar") or detected.get("name_en") or symbol
+            await message.answer(f"🔎 تم التعرف على: {name} ({symbol})")
+        else:
+            await message.answer("❌ ما قدرت أتعرف على الاسم أو الرمز. جرّب: الراجحي، أبل، بيتكوين، 1120.SR، AAPL")
+            return
 
     user = await _get_user(telegram_id)
     if not user:

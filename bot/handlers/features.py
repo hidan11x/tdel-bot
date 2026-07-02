@@ -253,7 +253,7 @@ async def cb_mtf_scan(callback: CallbackQuery):
     _user_context[callback.from_user.id] = {"context": "mtf_scan"}
     text = (
         "🔄 تحليل متعدد الفريمات\n\n"
-        "اكتب رمز الأصل (مثال: AAPL، 2222.SR، BTCUSDT):\n"
+        "اكتب اسم أو رمز الأصل (مثال: الراجحي، أبل، بيتكوين، AAPL، 2222.SR، BTCUSDT):\n"
         "البوت يفحص 3 فريمات (15min + 1h + 1d) ويعطيك تحليل شامل."
     )
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
@@ -262,17 +262,60 @@ async def cb_mtf_scan(callback: CallbackQuery):
 @router.callback_query(F.data == "vip_signals")
 async def cb_vip_signals(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.edit_text("🚀 جاري البحث عن أقوى الإشارات...")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🇸🇦 فرص السعودي", callback_data="vip_market:SAUDI")
+    builder.button(text="🇺🇸 فرص الأمريكي", callback_data="vip_market:US")
+    builder.button(text="₿ فرص الكريبتو", callback_data="vip_market:CRYPTO")
+    builder.button(text="🌍 أفضل الفرص", callback_data="vip_market:ALL")
+    builder.button(text="🔎 تحليل VIP لرمز", callback_data="vip_symbol")
+    builder.button(text="↩️ رجوع", callback_data="menu:analysis")
+    builder.adjust(2, 2, 1, 1)
+    text = (
+        "🚀 مركز إشارات VIP\n\n"
+        "اختر سوقاً لعرض أقوى الفرص الحالية، أو اختر تحليل VIP لرمز واكتب اسم السهم أو رمزه.\n"
+        "مثال: الراجحي، أبل، بيتكوين، 1120.SR، AAPL"
+    )
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "vip_symbol")
+async def cb_vip_symbol(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "vip_symbol"}
+    text = (
+        "🔎 تحليل VIP لرمز\n\n"
+        "اكتب اسم أو رمز الأصل المالي:\n"
+        "• الراجحي\n"
+        "• أبل\n"
+        "• بيتكوين\n"
+        "• 1120.SR / AAPL / BTCUSDT"
+    )
+    await callback.message.edit_text(text, reply_markup=back_button("vip_signals"))
+
+
+@router.callback_query(F.data.startswith("vip_market:"))
+async def cb_vip_market(callback: CallbackQuery):
+    await callback.answer()
+    market = callback.data.split(":", 1)[1]
+    await callback.message.edit_text("🚀 جاري البحث عن أقوى إشارات VIP...")
 
     try:
         from services.scanner import get_top_movers
-        results = await get_top_movers("CRYPTO", count=5)
+        from services.signal_engine import build_signal
+
+        markets = ["SAUDI", "US", "CRYPTO"] if market == "ALL" else [market]
+        results = []
+        for market_key in markets:
+            market_results = await get_top_movers(market_key, count=3 if market == "ALL" else 5)
+            results.extend(market_results)
+
+        results.sort(key=lambda r: float(r["score"].overall) if r.get("score") else 0, reverse=True)
         if not results:
-            await callback.message.edit_text("❌ تعذر الحصول على إشارات الآن.", reply_markup=back_button("main_menu"))
+            await callback.message.edit_text("❌ تعذر الحصول على إشارات الآن.", reply_markup=back_button("vip_signals"))
             return
 
-        from services.signal_engine import build_signal
-        lines = ["🚀 إشارات VIP — أقوى الفرص حالياً\n"]
+        market_label = {"SAUDI": "السعودي", "US": "الأمريكي", "CRYPTO": "الكريبتو", "ALL": "كل الأسواق"}.get(market, market)
+        lines = [f"🚀 إشارات VIP — {market_label}\n"]
         for i, r in enumerate(results[:5], 1):
             signal = build_signal(r)
             name = signal.name_ar if signal.name_ar != signal.symbol else signal.symbol
@@ -284,9 +327,9 @@ async def cb_vip_signals(callback: CallbackQuery):
             )
 
         lines.append("\nهذا تحليل آلي تعليمي وليس توصية مالية.")
-        await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=back_button("main_menu"))
+        await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=back_button("vip_signals"))
     except Exception:
-        await callback.message.edit_text("❌ تعذر الحصول على إشارات.", reply_markup=back_button("main_menu"))
+        await callback.message.edit_text("❌ تعذر الحصول على إشارات.", reply_markup=back_button("vip_signals"))
 
 
 @router.callback_query(F.data == "news:ALL")
@@ -365,7 +408,7 @@ async def cb_fib_menu(callback: CallbackQuery):
     _user_context[callback.from_user.id] = {"context": "fib_scan"}
     text = (
         "📐 مستويات فيبوناتشي\n\n"
-        "اكتب رمز الأصل (مثال: AAPL، 2222.SR، BTCUSDT):\n"
+        "اكتب اسم أو رمز الأصل (مثال: الراجحي، أبل، بيتكوين، AAPL، 2222.SR، BTCUSDT):\n"
         "البوت يحسب مستويات فيبوناتشي تلقائياً."
     )
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))

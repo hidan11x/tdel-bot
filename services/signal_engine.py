@@ -181,6 +181,7 @@ def extract_warnings(scan_result: dict) -> list[str]:
 
 
 def build_signal(scan_result: dict) -> SmartSignal:
+    indicators = scan_result.get("indicators", {}) or {}
     score_value = _to_score_value(scan_result.get("score"))
     confidence = calculate_confidence(scan_result)
     reasons = extract_reasons(scan_result)
