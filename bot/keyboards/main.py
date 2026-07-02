@@ -78,13 +78,14 @@ MAIN_MENU_BUTTONS = ALL_BUTTONS
 
 def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="🌐 لوحة VIP", callback_data="vip_dashboard")
     builder.button(text="📊 التحليل والفحص", callback_data="menu:analysis")
     builder.button(text="🌍 الأسواق", callback_data="menu:markets")
     builder.button(text="🔔 المتابعة والتنبيهات", callback_data="menu:watch")
     builder.button(text="📈 التقارير والفرص", callback_data="menu:reports")
     builder.button(text="🧰 أدوات احترافية", callback_data="menu:tools")
     builder.button(text="👤 حسابي والدعم", callback_data="menu:account")
-    builder.adjust(2, 2, 1)
+    builder.adjust(1, 2, 2, 2)
     return builder.as_markup()
 
 

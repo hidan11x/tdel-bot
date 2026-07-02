@@ -10,9 +10,10 @@ from sqlalchemy import func, select
 
 from config import settings
 from database import get_session
-from models import Alert, ErrorLog, ScanLog, User, Watchlist
+from models import Alert, ErrorLog, ScanLog, Symbol, User, Watchlist
 from services.dashboard_auth import verify_dashboard_token
 from services.market_data import YahooFinanceProvider, get_ohlcv
+from services.scanner import TOP_SYMBOLS
 from services.signal_engine import build_signal
 
 
@@ -223,6 +224,67 @@ async def dashboard_chart(request: web.Request) -> web.Response:
     )
 
 
+async def dashboard_symbols(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+
+    market = request.query.get("market", "ALL").strip().upper()
+    query = request.query.get("q", "").strip()
+    try:
+        limit = min(500, max(20, int(request.query.get("limit", "120"))))
+    except ValueError:
+        limit = 80
+
+    stmt = select(Symbol).where(Symbol.is_active == True)
+    if market in {"SAUDI", "US", "CRYPTO"}:
+        stmt = stmt.where(Symbol.market == market)
+    if query:
+        like = f"%{query}%"
+        stmt = stmt.where(
+            (Symbol.symbol.ilike(like))
+            | (Symbol.name_ar.ilike(like))
+            | (Symbol.name_en.ilike(like))
+        )
+    stmt = stmt.order_by(Symbol.market, Symbol.is_popular.desc(), Symbol.sort_order, Symbol.symbol).limit(limit)
+
+    async with get_session() as session:
+        symbols = list((await session.execute(stmt)).scalars().all())
+
+    items = [
+        {
+            "symbol": item.symbol,
+            "market": item.market,
+            "name_ar": item.name_ar,
+            "name_en": item.name_en,
+            "sector": item.sector or item.category or "",
+            "popular": bool(item.is_popular),
+        }
+        for item in symbols
+    ]
+
+    if not items and not query:
+        markets = ["SAUDI", "US", "CRYPTO"] if market == "ALL" else [market]
+        for market_key in markets:
+            if len(items) >= limit:
+                break
+            for symbol in TOP_SYMBOLS.get(market_key, [])[:limit]:
+                if len(items) >= limit:
+                    break
+                items.append(
+                    {
+                        "symbol": symbol,
+                        "market": market_key,
+                        "name_ar": symbol,
+                        "name_en": symbol,
+                        "sector": "",
+                        "popular": True,
+                    }
+                )
+
+    return _json({"items": items[:limit], "market": market, "query": query})
+
+
 async def dashboard_health(request: web.Request) -> web.Response:
     return _json({"ok": True, "service": "dashboard", "date": date.today().isoformat()})
 
@@ -234,6 +296,7 @@ def create_dashboard_app() -> web.Application:
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/summary", dashboard_summary)
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/radar", dashboard_radar)
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/chart", dashboard_chart)
+    app.router.add_get("/api/dashboard/{telegram_id}/{token}/symbols", dashboard_symbols)
     return app
 
 
@@ -344,7 +407,7 @@ DASHBOARD_HTML = r"""
     .down { color: var(--red); }
     .status { color: var(--muted); min-height: 22px; }
     .chart-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    select, .seg button {
+    input, select, .seg button, .market-tabs button {
       border: 1px solid var(--line);
       background: var(--panel-2);
       color: var(--text);
@@ -352,8 +415,13 @@ DASHBOARD_HTML = r"""
       padding: 9px 10px;
       font: inherit;
     }
+    input { width: 100%; }
     .seg { display: inline-flex; gap: 6px; }
-    .seg button.active { border-color: var(--teal); color: var(--teal); }
+    .symbol-tools { display: grid; gap: 9px; margin-bottom: 10px; }
+    .market-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .seg button.active, .market-tabs button.active { border-color: var(--teal); color: var(--teal); }
+    .symbol-row { cursor: pointer; }
+    .symbol-row:hover { background: rgba(255,255,255,.03); }
     #chart { width: 100%; height: 390px; }
     .health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .health div { background: var(--panel-2); border-radius: 8px; padding: 12px; }
@@ -442,7 +510,16 @@ DASHBOARD_HTML = r"""
             <div id="last-scans" class="status">لا توجد بيانات بعد</div>
           </div>
           <div class="panel">
-            <h2>رموزك</h2>
+            <h2>كل الرموز</h2>
+            <div class="symbol-tools">
+              <input id="symbol-search" type="search" placeholder="ابحث باسم الشركة أو الرمز" autocomplete="off" />
+              <div class="market-tabs" id="market-tabs">
+                <button class="active" data-market="ALL">الكل</button>
+                <button data-market="SAUDI">السعودي</button>
+                <button data-market="US">الأمريكي</button>
+                <button data-market="CRYPTO">الكريبتو</button>
+              </div>
+            </div>
             <div id="symbols" class="status">جاري التحميل...</div>
           </div>
         </div>
@@ -456,6 +533,8 @@ DASHBOARD_HTML = r"""
     const root = `/api/dashboard/${TG_ID}/${TOKEN}`;
     let currentSymbol = { symbol: "BTCUSDT", market: "CRYPTO" };
     let currentInterval = "1d";
+    let selectedMarket = "ALL";
+    let searchTimer;
     let chart, candleSeries, volumeSeries;
 
     const fmt = (n, d = 2) => Number(n || 0).toLocaleString("ar-SA", { maximumFractionDigits: d });
@@ -490,6 +569,17 @@ DASHBOARD_HTML = r"""
       window.addEventListener("resize", () => chart.applyOptions({ width: document.getElementById("chart").clientWidth }));
     }
 
+    function setChartOptions(symbols) {
+      const select = document.getElementById("symbol-select");
+      if (!symbols.length) return;
+      select.innerHTML = symbols.slice(0, 120).map((s, idx) => `<option value="${idx}">${s.name_ar || s.name_en || s.note || s.symbol} | ${s.symbol}</option>`).join("");
+      select.onchange = () => {
+        currentSymbol = symbols[Number(select.value)];
+        loadChart();
+      };
+      currentSymbol = symbols[0];
+    }
+
     async function loadSummary() {
       const data = await getJson(`${root}/summary`);
       document.getElementById("welcome").textContent = `أهلاً ${data.user.name} | ${data.user.plan.toUpperCase()} | آخر تحديث ${data.server_time}`;
@@ -501,20 +591,11 @@ DASHBOARD_HTML = r"""
       document.getElementById("s-us").textContent = statusText(data.markets.us);
       document.getElementById("s-crypto").textContent = statusText(data.markets.crypto);
 
-      const select = document.getElementById("symbol-select");
-      select.innerHTML = data.symbols.map((s, idx) => `<option value="${idx}">${s.note || s.symbol} | ${s.symbol}</option>`).join("");
-      select.onchange = () => {
-        currentSymbol = data.symbols[Number(select.value)];
-        loadChart();
-      };
-      currentSymbol = data.symbols[0];
-
-      document.getElementById("symbols").innerHTML = data.symbols.slice(0, 8).map(s =>
-        `<div class="symbol-row"><div class="row-top"><span class="name">${s.note || s.symbol}</span><span class="muted">${marketName(s.market)}</span></div><span class="muted">${s.symbol}</span></div>`
-      ).join("");
       document.getElementById("last-scans").innerHTML = data.last_scans.length ? data.last_scans.map(s =>
         `<div class="scan-row"><div class="row-top"><span class="name">${s.symbol}</span><span class="score">${fmt(s.score, 0)}/100</span></div><span class="muted">${s.signal || marketName(s.market)}</span></div>`
       ).join("") : "لا توجد فحوصات حديثة";
+      setChartOptions(data.symbols);
+      await loadSymbols();
       loadChart();
     }
 
@@ -549,12 +630,54 @@ DASHBOARD_HTML = r"""
       }
     }
 
+    async function loadSymbols() {
+      const q = document.getElementById("symbol-search").value.trim();
+      const box = document.getElementById("symbols");
+      box.textContent = "جاري تحميل الرموز...";
+      try {
+        const data = await getJson(`${root}/symbols?market=${encodeURIComponent(selectedMarket)}&q=${encodeURIComponent(q)}&limit=500`);
+        if (!data.items.length) {
+          box.textContent = "لا توجد رموز مطابقة";
+          return;
+        }
+        setChartOptions(data.items);
+        box.innerHTML = data.items.map((s, idx) =>
+          `<div class="symbol-row" data-idx="${idx}">
+            <div class="row-top"><span class="name">${s.name_ar || s.name_en || s.symbol}</span><span class="muted">${marketName(s.market)}</span></div>
+            <div class="row-top"><span class="muted">${s.symbol}</span><span class="muted small">${s.sector || ""}</span></div>
+          </div>`
+        ).join("");
+        [...box.querySelectorAll(".symbol-row")].forEach((row) => {
+          row.addEventListener("click", () => {
+            currentSymbol = data.items[Number(row.dataset.idx)];
+            document.getElementById("chart-status").textContent = `${currentSymbol.symbol} | ${marketName(currentSymbol.market)}`;
+            loadChart();
+          });
+        });
+      } catch (err) {
+        box.textContent = "تعذر تحميل الرموز حالياً";
+      }
+    }
+
     document.getElementById("intervals").addEventListener("click", (event) => {
       const btn = event.target.closest("button");
       if (!btn) return;
       [...document.querySelectorAll("#intervals button")].forEach(b => b.classList.toggle("active", b === btn));
       currentInterval = btn.dataset.i;
       loadChart();
+    });
+
+    document.getElementById("market-tabs").addEventListener("click", (event) => {
+      const btn = event.target.closest("button");
+      if (!btn) return;
+      selectedMarket = btn.dataset.market;
+      [...document.querySelectorAll("#market-tabs button")].forEach(b => b.classList.toggle("active", b === btn));
+      loadSymbols();
+    });
+
+    document.getElementById("symbol-search").addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadSymbols, 250);
     });
 
     initChart();
