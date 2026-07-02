@@ -1,8 +1,41 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 from loguru import logger
+
+
+def _env_value(key: str, default: str = "") -> str:
+    value = os.getenv(key, default).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
+async def _start_fallback_http_server(reason: str):
+    from aiohttp import web
+
+    async def health(_request):
+        return web.json_response(
+            {
+                "ok": False,
+                "service": "fallback",
+                "message": "Dashboard failed to start, but Railway HTTP is online.",
+                "reason": str(reason)[:500],
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/{tail:.*}", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(_env_value("DASHBOARD_PORT") or _env_value("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.warning("Fallback HTTP server started on port {}", port)
+    return runner
 
 
 async def startup():
@@ -34,12 +67,20 @@ async def startup():
         dashboard_runner = await start_dashboard_server()
     except Exception as e:
         logger.exception("Dashboard server failed to start: {}", e)
+        dashboard_runner = await _start_fallback_http_server(str(e))
 
+    bot_task = asyncio.create_task(_run_bot(), name="telegram-bot")
+    bot_task.add_done_callback(_log_bot_task_result)
+    await asyncio.Event().wait()
+
+
+def _log_bot_task_result(task: asyncio.Task):
     try:
-        await _run_bot()
+        task.result()
+    except asyncio.CancelledError:
+        logger.info("Bot task cancelled")
     except Exception as e:
-        logger.exception("Bot startup failed, keeping dashboard online: {}", e)
-        await asyncio.Event().wait()
+        logger.exception("Bot task stopped, HTTP dashboard is still online: {}", e)
 
 
 async def _run_bot():
