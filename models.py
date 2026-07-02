@@ -53,6 +53,7 @@ class User(Base):
     referral_days: Mapped[int] = mapped_column(Integer, default=0)
     language: Mapped[str] = mapped_column(String, default="ar")
     referrals_count: Mapped[int] = mapped_column(Integer, default=0)
+    referral_reward_claimed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
     last_active: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
 

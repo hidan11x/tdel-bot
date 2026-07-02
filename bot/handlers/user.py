@@ -76,6 +76,7 @@ async def cmd_start(message: Message, command=None, state=None):
             select(User).where(User.telegram_id == telegram_id)
         )
         user = result.scalar_one_or_none()
+        user_created = False
         if user is None:
             user = User(
                 telegram_id=telegram_id,
@@ -86,10 +87,12 @@ async def cmd_start(message: Message, command=None, state=None):
             )
             session.add(user)
             await session.commit()
+            user_created = True
 
-            if ref_code:
-                from services.social import process_referral
-                await process_referral(ref_code, telegram_id)
+    if ref_code and user_created:
+        from services.social import process_referral
+
+        await process_referral(ref_code, telegram_id)
 
     if share_token:
         from services.social import increment_share_view
@@ -127,9 +130,10 @@ async def cmd_start(message: Message, command=None, state=None):
         )
         builder = InlineKeyboardBuilder()
         builder.button(text="💳 أدخل كود التفعيل", callback_data="enter_code")
+        builder.button(text="🎁 دعوة الأصدقاء", callback_data="referral_menu")
         builder.button(text="👤 تواصل مع الدعم", callback_data="support")
         builder.button(text="🏠 الدخول للقائمة", callback_data="main_menu")
-        builder.adjust(1, 1, 1)
+        builder.adjust(1, 1, 1, 1)
         await message.answer(text, reply_markup=builder.as_markup())
     else:
         text = (

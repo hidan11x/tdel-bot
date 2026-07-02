@@ -13,7 +13,7 @@ from services.market_overview import get_market_overview
 from services.news import get_recent_news, format_news_items
 from services.social import (
     create_share_link, increment_share_view, process_referral,
-    export_scan_history_csv, get_user_scan_history, REFERRAL_REWARD_HOURS,
+    export_scan_history_csv, get_user_scan_history, REFERRAL_REWARD_HOURS, REFERRAL_TARGET,
 )
 from services.symbols_service import get_symbol_info
 from services.feature_access import PREDICTION_FEATURE, has_feature_access
@@ -313,15 +313,20 @@ async def cb_referral_menu(callback: CallbackQuery):
 
     bot_username = (await callback.bot.get_me()).username
     ref_link = f"https://t.me/{bot_username}?start=ref{user.telegram_id}"
-    reward_hours = int(user.referral_days or 0)
-    reward_label = "ساعتين" if REFERRAL_REWARD_HOURS == 2 else f"{REFERRAL_REWARD_HOURS} ساعة"
+    referrals = int(user.referrals_count or 0)
+    progress = min(referrals, REFERRAL_TARGET)
+    remaining = max(0, REFERRAL_TARGET - referrals)
+    reward_status = "تم استلام المكافأة ✅" if user.referral_reward_claimed else "لم تستلم المكافأة بعد"
+    reward_label = "ساعة VIP" if REFERRAL_REWARD_HOURS == 1 else f"{REFERRAL_REWARD_HOURS} ساعات VIP"
 
     text = (
-        f"🎁 دعوة صديق\n\n"
+        f"🎁 دعوة الأصدقاء\n\n"
         f"رابط الدعوة الخاص بك:\n{ref_link}\n\n"
-        f"📊 إحالاتك: {user.referrals_count or 0}\n"
-        f"🎁 ساعات مكافآت: {reward_hours} ساعة\n\n"
-        f"كل صديق يدخل عبر رابطك تحصل على {reward_label} اشتراك مجاني!"
+        f"📊 تقدمك: {progress}/{REFERRAL_TARGET}\n"
+        f"⏳ المتبقي: {remaining}\n"
+        f"🎁 المكافأة: {reward_label} مرة واحدة\n"
+        f"✅ الحالة: {reward_status}\n\n"
+        f"ادعُ {REFERRAL_TARGET} مستخدمين جدد حقيقيين عبر رابطك، وبعدها تحصل على {reward_label}."
     )
     await callback.message.edit_text(text, reply_markup=back_button("main_menu"))
 

@@ -48,6 +48,13 @@ class UserCheckMiddleware(BaseMiddleware):
                 await session.commit()
                 await session.refresh(db_user)
 
+                if isinstance(event, Message) and event.text:
+                    parts = event.text.strip().split(maxsplit=1)
+                    if len(parts) == 2 and parts[0].startswith("/start") and parts[1].startswith("ref"):
+                        from services.social import process_referral
+
+                        await process_referral(parts[1].strip(), telegram_id)
+
             if db_user.is_banned:
                 if isinstance(event, Message):
                     await event.answer("🚫 حسابك محظور. يرجى التواصل مع الدعم.")

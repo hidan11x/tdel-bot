@@ -1,11 +1,12 @@
 import secrets
 from typing import Optional
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from database import get_session
 from models import SharedAnalysis, User, ScanLog
 
-REFERRAL_REWARD_HOURS = 2
+REFERRAL_TARGET = 10
+REFERRAL_REWARD_HOURS = 1
 
 
 async def create_share_link(user_id: int, symbol: str, market: str) -> Optional[str]:
@@ -58,20 +59,31 @@ async def process_referral(referral_code: str, new_user_id: int) -> bool:
         if not referrer:
             return False
 
-        referrer.referrals_count = (referrer.referrals_count or 0) + 1
-        referrer.referral_days = (referrer.referral_days or 0) + REFERRAL_REWARD_HOURS
+        invited_result = await session.execute(select(User).where(User.telegram_id == new_user_id))
+        invited = invited_result.scalar_one_or_none()
+        if not invited or invited.id == referrer.id or invited.referred_by is not None:
+            return False
 
-        if referrer.subscription_end:
+        invited.referred_by = referrer.id
+        referrer.referrals_count = (referrer.referrals_count or 0) + 1
+
+        if referrer.referrals_count >= REFERRAL_TARGET and not referrer.referral_reward_claimed:
             from datetime import datetime, timezone, timedelta
-            base = referrer.subscription_end
-            if base.tzinfo is None:
-                base = base.replace(tzinfo=timezone.utc)
-            referrer.subscription_end = base + timedelta(hours=REFERRAL_REWARD_HOURS)
-        else:
-            from datetime import datetime, timezone, timedelta
-            referrer.subscription_start = datetime.now(timezone.utc)
-            referrer.subscription_end = datetime.now(timezone.utc) + timedelta(hours=REFERRAL_REWARD_HOURS)
-            referrer.plan = "basic"
+
+            now = datetime.now(timezone.utc)
+            base = now
+            if referrer.subscription_end:
+                base = referrer.subscription_end
+                if base.tzinfo is None:
+                    base = base.replace(tzinfo=timezone.utc)
+                if base < now:
+                    base = now
+            referrer.subscription_start = referrer.subscription_start or now
+            if referrer.plan != "lifetime":
+                referrer.plan = "vip"
+                referrer.subscription_end = base + timedelta(hours=REFERRAL_REWARD_HOURS)
+            referrer.referral_days = (referrer.referral_days or 0) + REFERRAL_REWARD_HOURS
+            referrer.referral_reward_claimed = True
 
         await session.commit()
     return True

@@ -7,7 +7,7 @@ from config import settings
 
 PLAN_FEATURES = {
     "free": [
-        "subscription", "support", "help",
+        "referral_menu", "subscription", "support", "help",
     ],
     "basic": [
         "scan_quick", "symbol_browser", "market:saudi", "market:us", "market:crypto",
@@ -63,7 +63,7 @@ ALL_BUTTONS: list[tuple[str, str]] = [
     ("🏆 أقوى القراءات", "top_readings"),
     ("📤 مشاركة تحليل", "share_menu"),
     ("📥 تصدير سجلي", "export_history"),
-    ("🎁 دعوة صديق", "referral_menu"),
+    ("🎁 دعوة الأصدقاء", "referral_menu"),
     ("🤖 مساعد الذكاء", "ai_assistant"),
     ("👤 حسابي", "my_profile"),
     ("🌐 اللغة", "language_toggle"),
@@ -135,6 +135,7 @@ def section_menu(section: str, plan: str = "vip", private_signals: bool = False)
         "account": [
             ("🌐 لوحة VIP", "vip_dashboard"),
             ("👤 حسابي", "my_profile"),
+            ("🎁 دعوة الأصدقاء", "referral_menu"),
             ("💳 الاشتراك", "subscription"),
             ("🎫 تذكرة دعم", "support_ticket"),
             ("🛠 الدعم", "support"),

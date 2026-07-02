@@ -59,3 +59,8 @@ def _run_lightweight_migrations(sync_conn):
         columns = {col["name"] for col in inspector.get_columns("activation_codes")}
         if "duration_minutes" not in columns:
             sync_conn.execute(text("ALTER TABLE activation_codes ADD COLUMN duration_minutes INTEGER DEFAULT 0"))
+
+    if "users" in tables:
+        columns = {col["name"] for col in inspector.get_columns("users")}
+        if "referral_reward_claimed" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN referral_reward_claimed BOOLEAN DEFAULT FALSE"))
