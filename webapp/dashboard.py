@@ -6,7 +6,8 @@ from typing import Any
 
 from aiohttp import web
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 from config import settings
 from database import get_session
@@ -15,6 +16,8 @@ from services.dashboard_auth import verify_dashboard_token
 from services.market_data import YahooFinanceProvider, get_ohlcv
 from services.scanner import TOP_SYMBOLS
 from services.signal_engine import build_signal
+from services.indicators import calculate_rsi, find_support_resistance
+from services.subscriptions import can_add_alert, can_add_watchlist_item
 
 
 RADAR_TTL_SECONDS = 90
@@ -30,6 +33,46 @@ def _env_value(key: str, default: str = "") -> str:
 
 def _json(data: dict[str, Any], status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers={"Cache-Control": "no-store"})
+
+
+async def _request_json(request: web.Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _symbol_payload(item: Watchlist | Symbol) -> dict[str, Any]:
+    if isinstance(item, Watchlist):
+        return {
+            "symbol": item.symbol,
+            "market": item.market,
+            "name_ar": item.note or item.symbol,
+            "name_en": item.symbol,
+            "sector": "",
+            "popular": False,
+        }
+    return {
+        "symbol": item.symbol,
+        "market": item.market,
+        "name_ar": item.name_ar,
+        "name_en": item.name_en,
+        "sector": item.sector or item.category or "",
+        "popular": bool(item.is_popular),
+    }
+
+
+def _alert_payload(item: Alert) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "symbol": item.symbol,
+        "market": item.market,
+        "alert_type": item.alert_type,
+        "value": item.value,
+        "is_active": bool(item.is_active),
+        "triggered": bool(item.triggered),
+    }
 
 
 def _is_vip(user: User) -> bool:
@@ -85,6 +128,14 @@ async def dashboard_summary(request: web.Request) -> web.Response:
                 select(func.count(Alert.id)).where(Alert.user_id == user.id, Alert.is_active == True)
             )
         ).scalar() or 0
+        alerts = (
+            await session.execute(
+                select(Alert)
+                .where(Alert.user_id == user.id)
+                .order_by(Alert.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
         scans_today = (
             await session.execute(
                 select(func.count(ScanLog.id)).where(
@@ -111,15 +162,13 @@ async def dashboard_summary(request: web.Request) -> web.Response:
         ).scalar() or 0
 
     market_status = YahooFinanceProvider.get_market_status()
-    symbols = [
-        {"symbol": item.symbol, "market": item.market, "note": item.note or ""}
-        for item in watchlist[:20]
-    ]
+    watchlist_symbols = [_symbol_payload(item) for item in watchlist[:30]]
+    symbols = list(watchlist_symbols)
     if not symbols:
         symbols = [
-            {"symbol": "1120.SR", "market": "SAUDI", "note": "الراجحي"},
-            {"symbol": "AAPL", "market": "US", "note": "Apple"},
-            {"symbol": "BTCUSDT", "market": "CRYPTO", "note": "Bitcoin"},
+            {"symbol": "1120.SR", "market": "SAUDI", "name_ar": "الراجحي", "name_en": "Al Rajhi", "sector": "", "popular": True},
+            {"symbol": "AAPL", "market": "US", "name_ar": "Apple", "name_en": "Apple", "sector": "", "popular": True},
+            {"symbol": "BTCUSDT", "market": "CRYPTO", "name_ar": "Bitcoin", "name_en": "Bitcoin", "sector": "", "popular": True},
         ]
 
     return _json(
@@ -139,6 +188,8 @@ async def dashboard_summary(request: web.Request) -> web.Response:
             },
             "markets": market_status,
             "symbols": symbols,
+            "watchlist": watchlist_symbols,
+            "alerts": [_alert_payload(item) for item in alerts],
             "last_scans": [
                 {
                     "symbol": scan.symbol,
@@ -204,11 +255,21 @@ async def dashboard_chart(request: web.Request) -> web.Response:
     if not data:
         return _json({"data": [], "message": "لا توجد بيانات كافية"}, status=404)
 
+    closes = [float(row["close"]) for row in data if row.get("close") is not None]
+    support = resistance = latest_rsi = None
+    if closes:
+        support, resistance = find_support_resistance(closes[-80:], lookback=min(30, len(closes)))
+        latest_rsi = calculate_rsi(closes[-50:]) if len(closes) >= 15 else None
+
     return _json(
         {
             "symbol": symbol,
             "market": market,
             "interval": interval,
+            "support": support,
+            "resistance": resistance,
+            "rsi": latest_rsi,
+            "last_price": closes[-1] if closes else None,
             "data": [
                 {
                     "time": int(row["timestamp"]),
@@ -285,6 +346,101 @@ async def dashboard_symbols(request: web.Request) -> web.Response:
     return _json({"items": items[:limit], "market": market, "query": query})
 
 
+async def dashboard_watchlist_action(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+
+    data = await _request_json(request)
+    symbol = str(data.get("symbol", "")).strip().upper()
+    market = str(data.get("market", "")).strip().upper()
+    action = str(data.get("action", "add")).strip().lower()
+    if not symbol or market not in {"SAUDI", "US", "CRYPTO"}:
+        return _json({"ok": False, "message": "رمز أو سوق غير صالح"}, status=400)
+
+    async with get_session() as session:
+        if action == "remove":
+            await session.execute(
+                delete(Watchlist).where(
+                    Watchlist.user_id == user.id,
+                    Watchlist.symbol == symbol,
+                    Watchlist.market == market,
+                )
+            )
+            await session.commit()
+            return _json({"ok": True, "message": "تم الحذف من قائمة المتابعة"})
+
+        existing = (
+            await session.execute(
+                select(Watchlist).where(
+                    Watchlist.user_id == user.id,
+                    Watchlist.symbol == symbol,
+                    Watchlist.market == market,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return _json({"ok": True, "message": "الرمز موجود بالفعل في قائمتك"})
+
+    if not await can_add_watchlist_item(user.id):
+        return _json({"ok": False, "message": "وصلت للحد المسموح لقائمة المتابعة"}, status=403)
+
+    async with get_session() as session:
+        item = Watchlist(user_id=user.id, symbol=symbol, market=market)
+        session.add(item)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return _json({"ok": True, "message": "الرمز موجود بالفعل في قائمتك"})
+
+    return _json({"ok": True, "message": "تمت الإضافة إلى قائمة المتابعة"})
+
+
+async def dashboard_alert_action(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+
+    data = await _request_json(request)
+    symbol = str(data.get("symbol", "")).strip().upper()
+    market = str(data.get("market", "")).strip().upper()
+    alert_type = str(data.get("alert_type", "price_above")).strip()
+    allowed_types = {
+        "price_above",
+        "price_below",
+        "rsi_above",
+        "rsi_below",
+        "near_support",
+        "near_resistance",
+        "price_change_percent",
+    }
+    if not symbol or market not in {"SAUDI", "US", "CRYPTO"} or alert_type not in allowed_types:
+        return _json({"ok": False, "message": "بيانات التنبيه غير صالحة"}, status=400)
+
+    try:
+        value = float(str(data.get("value", "")).replace(",", ""))
+    except ValueError:
+        return _json({"ok": False, "message": "قيمة التنبيه لازم تكون رقم"}, status=400)
+
+    if not await can_add_alert(user.id):
+        return _json({"ok": False, "message": "وصلت للحد المسموح للتنبيهات"}, status=403)
+
+    async with get_session() as session:
+        alert = Alert(
+            user_id=user.id,
+            symbol=symbol,
+            market=market,
+            alert_type=alert_type,
+            value=value,
+        )
+        session.add(alert)
+        await session.commit()
+        await session.refresh(alert)
+
+    return _json({"ok": True, "message": "تم إنشاء التنبيه", "alert": _alert_payload(alert)})
+
+
 async def dashboard_health(request: web.Request) -> web.Response:
     return _json({"ok": True, "service": "dashboard", "date": date.today().isoformat()})
 
@@ -297,6 +453,8 @@ def create_dashboard_app() -> web.Application:
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/radar", dashboard_radar)
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/chart", dashboard_chart)
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/symbols", dashboard_symbols)
+    app.router.add_post("/api/dashboard/{telegram_id}/{token}/watchlist", dashboard_watchlist_action)
+    app.router.add_post("/api/dashboard/{telegram_id}/{token}/alerts", dashboard_alert_action)
     return app
 
 
@@ -407,7 +565,7 @@ DASHBOARD_HTML = r"""
     .down { color: var(--red); }
     .status { color: var(--muted); min-height: 22px; }
     .chart-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    input, select, .seg button, .market-tabs button {
+    input, select, .seg button, .market-tabs button, .action-panel button {
       border: 1px solid var(--line);
       background: var(--panel-2);
       color: var(--text);
@@ -422,6 +580,27 @@ DASHBOARD_HTML = r"""
     .seg button.active, .market-tabs button.active { border-color: var(--teal); color: var(--teal); }
     .symbol-row { cursor: pointer; }
     .symbol-row:hover { background: rgba(255,255,255,.03); }
+    .highlight {
+      border: 1px solid rgba(244, 184, 96, .35);
+      background: rgba(244, 184, 96, .08);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      cursor: pointer;
+    }
+    .action-panel {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+    .action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .action-panel button.primary { background: rgba(39, 211, 178, .14); border-color: rgba(39, 211, 178, .35); color: var(--teal); }
+    .action-panel button.warn { background: rgba(244, 184, 96, .12); border-color: rgba(244, 184, 96, .32); color: var(--amber); }
+    .feedback { color: var(--muted); min-height: 20px; }
+    .mini-select { min-width: 170px; }
     #chart { width: 100%; height: 390px; }
     .health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .health div { background: var(--panel-2); border-radius: 8px; padding: 12px; }
@@ -493,6 +672,28 @@ DASHBOARD_HTML = r"""
               </div>
             </div>
             <div id="chart"></div>
+            <div class="action-panel">
+              <div class="row-top">
+                <span class="name" id="selected-symbol">-</span>
+                <span class="muted small" id="chart-meta">دعم ومقاومة وRSI تظهر بعد تحميل الشارت</span>
+              </div>
+              <div class="action-row">
+                <button class="primary" id="add-watch">إضافة للقائمة</button>
+                <button class="warn" id="remove-watch">حذف من القائمة</button>
+                <select class="mini-select" id="alert-type">
+                  <option value="price_above">السعر فوق</option>
+                  <option value="price_below">السعر تحت</option>
+                  <option value="rsi_above">RSI فوق</option>
+                  <option value="rsi_below">RSI تحت</option>
+                  <option value="near_support">قرب الدعم</option>
+                  <option value="near_resistance">قرب المقاومة</option>
+                  <option value="price_change_percent">تغير يومي %</option>
+                </select>
+                <input class="mini-select" id="alert-value" inputmode="decimal" placeholder="القيمة" />
+                <button class="primary" id="create-alert">إنشاء تنبيه</button>
+              </div>
+              <div class="feedback" id="action-feedback"></div>
+            </div>
           </div>
         </div>
 
@@ -504,6 +705,14 @@ DASHBOARD_HTML = r"""
               <div><div class="muted small">الأمريكي</div><strong id="s-us">-</strong></div>
               <div><div class="muted small">الكريبتو</div><strong id="s-crypto">-</strong></div>
             </div>
+          </div>
+          <div class="panel">
+            <h2>قائمتي</h2>
+            <div id="watchlist" class="status">جاري التحميل...</div>
+          </div>
+          <div class="panel">
+            <h2>تنبيهاتي</h2>
+            <div id="alerts" class="status">جاري التحميل...</div>
           </div>
           <div class="panel">
             <h2>آخر نشاط</h2>
@@ -535,6 +744,9 @@ DASHBOARD_HTML = r"""
     let currentInterval = "1d";
     let selectedMarket = "ALL";
     let searchTimer;
+    let liveTimer;
+    let supportLine;
+    let resistanceLine;
     let chart, candleSeries, volumeSeries;
 
     const fmt = (n, d = 2) => Number(n || 0).toLocaleString("ar-SA", { maximumFractionDigits: d });
@@ -545,6 +757,66 @@ DASHBOARD_HTML = r"""
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
+    }
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "تعذر تنفيذ العملية");
+      return data;
+    }
+
+    function setFeedback(text) {
+      document.getElementById("action-feedback").textContent = text || "";
+    }
+
+    function renderWatchlist(items) {
+      const box = document.getElementById("watchlist");
+      if (!items || !items.length) {
+        box.textContent = "قائمتك فارغة";
+        return;
+      }
+      box.innerHTML = items.slice(0, 10).map((s, idx) =>
+        `<div class="symbol-row" data-idx="${idx}" data-kind="watch">
+          <div class="row-top"><span class="name">${s.name_ar || s.symbol}</span><span class="muted">${marketName(s.market)}</span></div>
+          <span class="muted">${s.symbol}</span>
+        </div>`
+      ).join("");
+      [...box.querySelectorAll(".symbol-row")].forEach((row) => {
+        row.addEventListener("click", () => {
+          currentSymbol = items[Number(row.dataset.idx)];
+          loadChart();
+        });
+      });
+    }
+
+    function renderAlerts(items) {
+      const box = document.getElementById("alerts");
+      if (!items || !items.length) {
+        box.textContent = "لا توجد تنبيهات نشطة";
+        return;
+      }
+      const typeLabel = {
+        price_above: "فوق", price_below: "تحت", rsi_above: "RSI فوق", rsi_below: "RSI تحت",
+        near_support: "قرب الدعم", near_resistance: "قرب المقاومة", price_change_percent: "تغير %",
+      };
+      box.innerHTML = items.slice(0, 8).map((a) =>
+        `<div class="scan-row">
+          <div class="row-top"><span class="name">${a.symbol}</span><span class="${a.is_active ? "up" : "muted"}">${a.is_active ? "نشط" : "متوقف"}</span></div>
+          <span class="muted">${typeLabel[a.alert_type] || a.alert_type} | ${fmt(a.value, 4)}</span>
+        </div>`
+      ).join("");
+    }
+
+    function selectSymbol(symbol) {
+      currentSymbol = symbol;
+      document.getElementById("selected-symbol").textContent = `${symbol.name_ar || symbol.name_en || symbol.symbol} | ${symbol.symbol}`;
+      setFeedback("");
+      loadChart();
     }
 
     function initChart() {
@@ -574,10 +846,10 @@ DASHBOARD_HTML = r"""
       if (!symbols.length) return;
       select.innerHTML = symbols.slice(0, 120).map((s, idx) => `<option value="${idx}">${s.name_ar || s.name_en || s.note || s.symbol} | ${s.symbol}</option>`).join("");
       select.onchange = () => {
-        currentSymbol = symbols[Number(select.value)];
-        loadChart();
+        selectSymbol(symbols[Number(select.value)]);
       };
       currentSymbol = symbols[0];
+      document.getElementById("selected-symbol").textContent = `${currentSymbol.name_ar || currentSymbol.name_en || currentSymbol.symbol} | ${currentSymbol.symbol}`;
     }
 
     async function loadSummary() {
@@ -590,6 +862,8 @@ DASHBOARD_HTML = r"""
       document.getElementById("s-saudi").textContent = statusText(data.markets.saudi);
       document.getElementById("s-us").textContent = statusText(data.markets.us);
       document.getElementById("s-crypto").textContent = statusText(data.markets.crypto);
+      renderWatchlist(data.watchlist);
+      renderAlerts(data.alerts);
 
       document.getElementById("last-scans").innerHTML = data.last_scans.length ? data.last_scans.map(s =>
         `<div class="scan-row"><div class="row-top"><span class="name">${s.symbol}</span><span class="score">${fmt(s.score, 0)}/100</span></div><span class="muted">${s.signal || marketName(s.market)}</span></div>`
@@ -603,14 +877,27 @@ DASHBOARD_HTML = r"""
       const box = document.getElementById("radar");
       try {
         const data = await getJson(`${root}/radar`);
-        box.innerHTML = data.items.map(item => {
+        const best = data.items[0];
+        const bestHtml = best ? `<div class="highlight" data-symbol="${best.symbol}" data-market="${best.market}" data-name="${best.name || best.symbol}">
+          <div class="row-top"><span class="name">فرصة اليوم: ${best.name || best.symbol}</span><span class="score">${best.score}/100</span></div>
+          <div class="muted small">${best.symbol} | ${marketName(best.market)} | ثقة ${best.confidence}/100 | مخاطرة ${best.risk}</div>
+        </div>` : "";
+        box.innerHTML = bestHtml + data.items.map(item => {
           const cls = item.change >= 0 ? "up" : "down";
-          return `<div class="market-row">
+          return `<div class="market-row symbol-row" data-symbol="${item.symbol}" data-market="${item.market}" data-name="${item.name || item.symbol}">
             <div class="row-top"><span class="name">${item.name || item.symbol}</span><span class="score">${item.score}/100</span></div>
             <div class="row-top"><span class="muted">${item.symbol} | ${marketName(item.market)}</span><span class="${cls}">${fmt(item.change)}%</span></div>
             <div class="muted small">ثقة ${item.confidence}/100 | مخاطرة ${item.risk} | دعم ${fmt(item.support, 4)} | مقاومة ${fmt(item.resistance, 4)}</div>
           </div>`;
         }).join("");
+        [...box.querySelectorAll(".symbol-row, .highlight")].forEach((row) => {
+          row.addEventListener("click", () => selectSymbol({
+            symbol: row.dataset.symbol,
+            market: row.dataset.market,
+            name_ar: row.dataset.name,
+            name_en: row.dataset.name,
+          }));
+        });
       } catch (err) {
         box.textContent = "تعذر تحميل رادار الفرص حالياً";
       }
@@ -621,10 +908,20 @@ DASHBOARD_HTML = r"""
       document.getElementById("chart-status").textContent = "جاري التحميل...";
       try {
         const data = await getJson(`${root}/chart?symbol=${encodeURIComponent(currentSymbol.symbol)}&market=${encodeURIComponent(currentSymbol.market)}&interval=${currentInterval}`);
+        if (supportLine) { candleSeries.removePriceLine(supportLine); supportLine = null; }
+        if (resistanceLine) { candleSeries.removePriceLine(resistanceLine); resistanceLine = null; }
         candleSeries.setData(data.data.map(x => ({ time: x.time, open: x.open, high: x.high, low: x.low, close: x.close })));
         volumeSeries.setData(data.data.map(x => ({ time: x.time, value: x.volume, color: x.close >= x.open ? "rgba(57,217,138,.35)" : "rgba(255,107,107,.35)" })));
+        if (data.support) {
+          supportLine = candleSeries.createPriceLine({ price: data.support, color: "#39d98a", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "دعم" });
+        }
+        if (data.resistance) {
+          resistanceLine = candleSeries.createPriceLine({ price: data.resistance, color: "#ff6b6b", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "مقاومة" });
+        }
         chart.timeScale().fitContent();
-        document.getElementById("chart-status").textContent = `${data.symbol} | ${data.interval}`;
+        document.getElementById("chart-status").textContent = `${data.symbol} | ${data.interval} | حي`;
+        document.getElementById("chart-meta").textContent =
+          `السعر ${fmt(data.last_price, 4)} | دعم ${fmt(data.support, 4)} | مقاومة ${fmt(data.resistance, 4)} | RSI ${data.rsi ? fmt(data.rsi, 1) : "-"}`;
       } catch (err) {
         document.getElementById("chart-status").textContent = "تعذر تحميل الشارت";
       }
@@ -649,13 +946,74 @@ DASHBOARD_HTML = r"""
         ).join("");
         [...box.querySelectorAll(".symbol-row")].forEach((row) => {
           row.addEventListener("click", () => {
-            currentSymbol = data.items[Number(row.dataset.idx)];
-            document.getElementById("chart-status").textContent = `${currentSymbol.symbol} | ${marketName(currentSymbol.market)}`;
-            loadChart();
+            selectSymbol(data.items[Number(row.dataset.idx)]);
           });
         });
       } catch (err) {
         box.textContent = "تعذر تحميل الرموز حالياً";
+      }
+    }
+
+    async function refreshSummaryPanels() {
+      try {
+        const data = await getJson(`${root}/summary`);
+        document.getElementById("m-watch").textContent = data.cards.watchlist;
+        document.getElementById("m-alerts").textContent = data.cards.alerts;
+        renderWatchlist(data.watchlist);
+        renderAlerts(data.alerts);
+      } catch (err) {}
+    }
+
+    async function addCurrentToWatchlist() {
+      setFeedback("جاري الإضافة...");
+      try {
+        const data = await postJson(`${root}/watchlist`, {
+          action: "add",
+          symbol: currentSymbol.symbol,
+          market: currentSymbol.market,
+        });
+        setFeedback(data.message || "تمت الإضافة");
+        await refreshSummaryPanels();
+      } catch (err) {
+        setFeedback(err.message);
+      }
+    }
+
+    async function removeCurrentFromWatchlist() {
+      setFeedback("جاري الحذف...");
+      try {
+        const data = await postJson(`${root}/watchlist`, {
+          action: "remove",
+          symbol: currentSymbol.symbol,
+          market: currentSymbol.market,
+        });
+        setFeedback(data.message || "تم الحذف");
+        await refreshSummaryPanels();
+      } catch (err) {
+        setFeedback(err.message);
+      }
+    }
+
+    async function createCurrentAlert() {
+      const alertType = document.getElementById("alert-type").value;
+      const value = document.getElementById("alert-value").value.trim();
+      if (!value) {
+        setFeedback("اكتب قيمة التنبيه أولاً");
+        return;
+      }
+      setFeedback("جاري إنشاء التنبيه...");
+      try {
+        const data = await postJson(`${root}/alerts`, {
+          symbol: currentSymbol.symbol,
+          market: currentSymbol.market,
+          alert_type: alertType,
+          value,
+        });
+        setFeedback(data.message || "تم إنشاء التنبيه");
+        document.getElementById("alert-value").value = "";
+        await refreshSummaryPanels();
+      } catch (err) {
+        setFeedback(err.message);
       }
     }
 
@@ -680,9 +1038,16 @@ DASHBOARD_HTML = r"""
       searchTimer = setTimeout(loadSymbols, 250);
     });
 
+    document.getElementById("add-watch").addEventListener("click", addCurrentToWatchlist);
+    document.getElementById("remove-watch").addEventListener("click", removeCurrentFromWatchlist);
+    document.getElementById("create-alert").addEventListener("click", createCurrentAlert);
+
     initChart();
     loadSummary().catch(() => document.getElementById("welcome").textContent = "تعذر تحميل بيانات الحساب");
     loadRadar();
+    liveTimer = setInterval(() => {
+      if (document.visibilityState === "visible") loadChart();
+    }, 30000);
   </script>
 </body>
 </html>
