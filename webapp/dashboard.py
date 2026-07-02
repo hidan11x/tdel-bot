@@ -16,7 +16,8 @@ from services.dashboard_auth import verify_dashboard_token
 from services.market_data import YahooFinanceProvider, get_current_price_sync, get_ohlcv
 from services.scanner import TOP_SYMBOLS
 from services.signal_engine import build_signal
-from services.indicators import calculate_rsi, find_support_resistance
+from services.indicators import calculate_all, calculate_rsi, find_support_resistance
+from services.scoring import calculate_score, get_rating, get_risk_level
 from services.subscriptions import can_add_alert, can_add_watchlist_item
 
 
@@ -365,10 +366,27 @@ async def dashboard_chart(request: web.Request) -> web.Response:
         return _json({"data": [], "message": "لا توجد بيانات كافية"}, status=404)
 
     closes = [float(row["close"]) for row in data if row.get("close") is not None]
-    support = resistance = latest_rsi = None
+    support = resistance = latest_rsi = score_value = None
+    rating = risk = trend = None
+    change_percent = 0.0
     if closes:
         support, resistance = find_support_resistance(closes[-80:], lookback=min(30, len(closes)))
         latest_rsi = calculate_rsi(closes[-50:]) if len(closes) >= 15 else None
+        prev_close = closes[-2] if len(closes) >= 2 else closes[-1]
+        change_percent = ((closes[-1] - prev_close) / prev_close * 100) if prev_close else 0.0
+        try:
+            import pandas as pd
+
+            df = pd.DataFrame(data)
+            indicators = calculate_all(df)
+            indicators["current_price"] = closes[-1]
+            score = calculate_score(indicators)
+            score_value = round(float(score.overall), 1)
+            rating = get_rating(score.overall)
+            risk = get_risk_level(score.risk_score)
+            trend = indicators.get("trend")
+        except Exception:
+            logger.exception("dashboard chart score failed for {} {}", symbol, market)
 
     return _json(
         {
@@ -379,6 +397,11 @@ async def dashboard_chart(request: web.Request) -> web.Response:
             "resistance": resistance,
             "rsi": latest_rsi,
             "last_price": closes[-1] if closes else None,
+            "change_percent": change_percent,
+            "score": score_value,
+            "rating": rating,
+            "risk": risk,
+            "trend": trend,
             "data": [
                 {
                     "time": int(row["timestamp"]),
@@ -839,6 +862,7 @@ DASHBOARD_HTML = r"""
     .action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     button.primary, .action-panel button.primary { background: rgba(39, 211, 178, .14); border-color: rgba(39, 211, 178, .35); color: var(--teal); }
     .action-panel button.warn { background: rgba(244, 184, 96, .12); border-color: rgba(244, 184, 96, .32); color: var(--amber); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
     .feedback { color: var(--muted); min-height: 20px; }
     .mini-select { min-width: 170px; }
     .portfolio-form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
@@ -857,6 +881,10 @@ DASHBOARD_HTML = r"""
     .health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .health div { background: var(--panel-2); border-radius: 8px; padding: 12px; }
     .small { font-size: 13px; }
+    #overview-section, #opportunities-section, #chart-section, #brief-section, #watch-section, #alerts-section,
+    #system-section, #portfolio-section, #saved-section, #activity-section, #symbols-section {
+      scroll-margin-top: 18px;
+    }
     @media (max-width: 980px) {
       .shell { display: block; }
       aside { position: static; height: auto; border-left: 0; border-bottom: 1px solid var(--line); }
@@ -880,12 +908,12 @@ DASHBOARD_HTML = r"""
     <aside>
       <div class="brand">تداول بوت VIP</div>
       <div class="nav">
-        <button class="active">لوحتي</button>
-        <button>الفرص</button>
-        <button>الشارت</button>
-        <button>المتابعة</button>
-        <button>التنبيهات</button>
-        <button>النظام</button>
+        <button class="active" data-target="overview-section">لوحتي</button>
+        <button data-target="opportunities-section">الفرص</button>
+        <button data-target="chart-section">الشارت</button>
+        <button data-target="watch-section">المتابعة</button>
+        <button data-target="alerts-section">التنبيهات</button>
+        <button data-target="system-section">النظام</button>
       </div>
     </aside>
     <main>
@@ -897,7 +925,7 @@ DASHBOARD_HTML = r"""
         <div class="badge">متصل مباشر</div>
       </header>
 
-      <section class="grid cards">
+      <section class="grid cards" id="overview-section">
         <div class="panel metric"><div class="label">قائمتي</div><div class="value" id="m-watch">-</div></div>
         <div class="panel metric"><div class="label">تنبيهاتي</div><div class="value" id="m-alerts">-</div></div>
         <div class="panel metric"><div class="label">فحوصات اليوم</div><div class="value" id="m-scans">-</div></div>
@@ -906,11 +934,11 @@ DASHBOARD_HTML = r"""
 
       <section class="grid layout">
         <div class="grid">
-          <div class="panel">
+          <div class="panel" id="opportunities-section">
             <h2>رادار الفرص</h2>
             <div id="radar" class="status">جاري تشغيل الرادار...</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="chart-section">
             <div class="row-top">
               <h2>الشارت الذكي</h2>
               <span class="muted small" id="chart-status">جاهز</span>
@@ -958,7 +986,7 @@ DASHBOARD_HTML = r"""
         </div>
 
         <div class="grid">
-          <div class="panel">
+          <div class="panel" id="system-section">
             <h2>حالة الأسواق</h2>
             <div class="health">
               <div><div class="muted small">السعودي</div><strong id="s-saudi">-</strong></div>
@@ -966,19 +994,19 @@ DASHBOARD_HTML = r"""
               <div><div class="muted small">الكريبتو</div><strong id="s-crypto">-</strong></div>
             </div>
           </div>
-          <div class="panel">
+          <div class="panel" id="brief-section">
             <h2>ملخص VIP اليوم</h2>
             <div id="vip-brief" class="status">جاري تجهيز الملخص...</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="watch-section">
             <h2>قائمتي</h2>
             <div id="watchlist" class="status">جاري التحميل...</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="alerts-section">
             <h2>تنبيهاتي</h2>
             <div id="alerts" class="status">جاري التحميل...</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="portfolio-section">
             <h2>محفظتي التجريبية</h2>
             <div class="portfolio-summary">
               <div><div class="muted small">صفقات مفتوحة</div><strong id="pf-count">-</strong></div>
@@ -1000,7 +1028,7 @@ DASHBOARD_HTML = r"""
             <div class="feedback" id="portfolio-feedback"></div>
             <div id="portfolio" class="status">جاري التحميل...</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="saved-section">
             <h2>سجل الفرص</h2>
             <div class="portfolio-summary">
               <div><div class="muted small">محفوظة</div><strong id="opp-count">-</strong></div>
@@ -1009,11 +1037,11 @@ DASHBOARD_HTML = r"""
             </div>
             <div id="saved-opportunities" class="status">جاري التحميل...</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="activity-section">
             <h2>آخر نشاط</h2>
             <div id="last-scans" class="status">لا توجد بيانات بعد</div>
           </div>
-          <div class="panel">
+          <div class="panel" id="symbols-section">
             <h2>كل الرموز</h2>
             <div class="symbol-tools">
               <input id="symbol-search" type="search" placeholder="ابحث باسم الشركة أو الرمز" autocomplete="off" />
@@ -1044,8 +1072,12 @@ DASHBOARD_HTML = r"""
     let supportLine;
     let resistanceLine;
     let chart, candleSeries, volumeSeries;
+    let chartRequestSeq = 0;
 
-    const fmt = (n, d = 2) => Number(n || 0).toLocaleString("ar-SA", { maximumFractionDigits: d });
+    const fmt = (n, d = 2) => {
+      if (n === null || n === undefined || n === "" || Number.isNaN(Number(n))) return "-";
+      return Number(n).toLocaleString("ar-SA", { maximumFractionDigits: d });
+    };
     const marketName = (m) => ({SAUDI: "السعودي", US: "الأمريكي", CRYPTO: "الكريبتو"}[m] || m);
     const statusText = (v) => v === "open" ? "مفتوح" : "مغلق";
 
@@ -1074,6 +1106,15 @@ DASHBOARD_HTML = r"""
       document.getElementById("portfolio-feedback").textContent = text || "";
     }
 
+    function setBusy(id, busy) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = Boolean(busy);
+    }
+
+    function sameSymbol(a, b) {
+      return a && b && a.symbol === b.symbol && a.market === b.market;
+    }
+
     function renderWatchlist(items) {
       const box = document.getElementById("watchlist");
       if (!items || !items.length) {
@@ -1088,8 +1129,7 @@ DASHBOARD_HTML = r"""
       ).join("");
       [...box.querySelectorAll(".symbol-row")].forEach((row) => {
         row.addEventListener("click", () => {
-          currentSymbol = items[Number(row.dataset.idx)];
-          loadChart();
+          selectSymbol(items[Number(row.dataset.idx)]);
         });
       });
     }
@@ -1207,6 +1247,9 @@ DASHBOARD_HTML = r"""
     function selectSymbol(symbol) {
       currentSymbol = symbol;
       document.getElementById("selected-symbol").textContent = `${symbol.name_ar || symbol.name_en || symbol.symbol} | ${symbol.symbol}`;
+      const select = document.getElementById("symbol-select");
+      const option = [...select.options].find((item) => item.dataset.symbol === symbol.symbol && item.dataset.market === symbol.market);
+      if (option) select.value = option.value;
       setFeedback("");
       loadChart();
     }
@@ -1233,14 +1276,20 @@ DASHBOARD_HTML = r"""
       window.addEventListener("resize", () => chart.applyOptions({ width: document.getElementById("chart").clientWidth }));
     }
 
-    function setChartOptions(symbols) {
+    function setChartOptions(symbols, options = {}) {
       const select = document.getElementById("symbol-select");
       if (!symbols.length) return;
-      select.innerHTML = symbols.slice(0, 120).map((s, idx) => `<option value="${idx}">${s.name_ar || s.name_en || s.note || s.symbol} | ${s.symbol}</option>`).join("");
+      const list = symbols.slice(0, 120);
+      select.innerHTML = list.map((s, idx) => `<option value="${idx}" data-symbol="${s.symbol}" data-market="${s.market}">${s.name_ar || s.name_en || s.note || s.symbol} | ${s.symbol}</option>`).join("");
       select.onchange = () => {
-        selectSymbol(symbols[Number(select.value)]);
+        selectSymbol(list[Number(select.value)]);
       };
-      currentSymbol = symbols[0];
+      const existingIndex = list.findIndex((item) => sameSymbol(item, currentSymbol));
+      if (options.setCurrent || !currentSymbol?.symbol || existingIndex === -1 && options.forceFirst) {
+        currentSymbol = list[0];
+      }
+      const selectedIndex = list.findIndex((item) => sameSymbol(item, currentSymbol));
+      if (selectedIndex >= 0) select.value = String(selectedIndex);
       document.getElementById("selected-symbol").textContent = `${currentSymbol.name_ar || currentSymbol.name_en || currentSymbol.symbol} | ${currentSymbol.symbol}`;
     }
 
@@ -1263,7 +1312,7 @@ DASHBOARD_HTML = r"""
       document.getElementById("last-scans").innerHTML = data.last_scans.length ? data.last_scans.map(s =>
         `<div class="scan-row"><div class="row-top"><span class="name">${s.symbol}</span><span class="score">${fmt(s.score, 0)}/100</span></div><span class="muted">${s.signal || marketName(s.market)}</span></div>`
       ).join("") : "لا توجد فحوصات حديثة";
-      setChartOptions(data.symbols);
+      setChartOptions(data.symbols, { setCurrent: true });
       await loadSymbols();
       loadChart();
     }
@@ -1302,9 +1351,11 @@ DASHBOARD_HTML = r"""
 
     async function loadChart() {
       if (!chart) return;
+      const seq = ++chartRequestSeq;
       document.getElementById("chart-status").textContent = "جاري التحميل...";
       try {
         const data = await getJson(`${root}/chart?symbol=${encodeURIComponent(currentSymbol.symbol)}&market=${encodeURIComponent(currentSymbol.market)}&interval=${currentInterval}`);
+        if (seq !== chartRequestSeq) return;
         latestChartData = data;
         if (supportLine) { candleSeries.removePriceLine(supportLine); supportLine = null; }
         if (resistanceLine) { candleSeries.removePriceLine(resistanceLine); resistanceLine = null; }
@@ -1319,18 +1370,20 @@ DASHBOARD_HTML = r"""
         chart.timeScale().fitContent();
         document.getElementById("chart-status").textContent = `${data.symbol} | ${data.interval} | حي`;
         document.getElementById("chart-meta").textContent =
-          `السعر ${fmt(data.last_price, 4)} | دعم ${fmt(data.support, 4)} | مقاومة ${fmt(data.resistance, 4)} | RSI ${data.rsi ? fmt(data.rsi, 1) : "-"}`;
+          `السعر ${fmt(data.last_price, 4)} | التغير ${fmt(data.change_percent, 2)}% | السكور ${data.score ? fmt(data.score, 1) + "/100" : "-"} | دعم ${fmt(data.support, 4)} | مقاومة ${fmt(data.resistance, 4)} | RSI ${data.rsi ? fmt(data.rsi, 1) : "-"}`;
         if (!document.getElementById("pf-entry").value && data.last_price) {
           document.getElementById("pf-entry").placeholder = `سعر الدخول - الحالي ${fmt(data.last_price, 4)}`;
         }
         document.getElementById("pf-target").placeholder = data.resistance ? `الهدف - مقاومة ${fmt(data.resistance, 4)}` : "الهدف";
         document.getElementById("pf-stop").placeholder = data.support ? `الوقف - دعم ${fmt(data.support, 4)}` : "وقف الخسارة";
       } catch (err) {
+        if (seq !== chartRequestSeq) return;
         document.getElementById("chart-status").textContent = "تعذر تحميل الشارت";
+        document.getElementById("chart-meta").textContent = err.message || "جرب رمزاً أو فريماً مختلفاً";
       }
     }
 
-    async function loadSymbols() {
+    async function loadSymbols(options = {}) {
       const q = document.getElementById("symbol-search").value.trim();
       const box = document.getElementById("symbols");
       box.textContent = "جاري تحميل الرموز...";
@@ -1340,7 +1393,7 @@ DASHBOARD_HTML = r"""
           box.textContent = "لا توجد رموز مطابقة";
           return;
         }
-        setChartOptions(data.items);
+        setChartOptions(data.items, { forceFirst: Boolean(options.forceFirst) });
         box.innerHTML = data.items.map((s, idx) =>
           `<div class="symbol-row" data-idx="${idx}">
             <div class="row-top"><span class="name">${s.name_ar || s.name_en || s.symbol}</span><span class="muted">${marketName(s.market)}</span></div>
@@ -1371,6 +1424,7 @@ DASHBOARD_HTML = r"""
     }
 
     async function addCurrentToWatchlist() {
+      setBusy("add-watch", true);
       setFeedback("جاري الإضافة...");
       try {
         const data = await postJson(`${root}/watchlist`, {
@@ -1382,10 +1436,13 @@ DASHBOARD_HTML = r"""
         await refreshSummaryPanels();
       } catch (err) {
         setFeedback(err.message);
+      } finally {
+        setBusy("add-watch", false);
       }
     }
 
     async function removeCurrentFromWatchlist() {
+      setBusy("remove-watch", true);
       setFeedback("جاري الحذف...");
       try {
         const data = await postJson(`${root}/watchlist`, {
@@ -1397,6 +1454,8 @@ DASHBOARD_HTML = r"""
         await refreshSummaryPanels();
       } catch (err) {
         setFeedback(err.message);
+      } finally {
+        setBusy("remove-watch", false);
       }
     }
 
@@ -1407,6 +1466,7 @@ DASHBOARD_HTML = r"""
         setFeedback("اكتب قيمة التنبيه أولاً");
         return;
       }
+      setBusy("create-alert", true);
       setFeedback("جاري إنشاء التنبيه...");
       try {
         const data = await postJson(`${root}/alerts`, {
@@ -1420,6 +1480,8 @@ DASHBOARD_HTML = r"""
         await refreshSummaryPanels();
       } catch (err) {
         setFeedback(err.message);
+      } finally {
+        setBusy("create-alert", false);
       }
     }
 
@@ -1444,6 +1506,7 @@ DASHBOARD_HTML = r"""
         setPortfolioFeedback("اكتب سعر الدخول والكمية");
         return;
       }
+      setBusy("add-position", true);
       setPortfolioFeedback("جاري إضافة الصفقة...");
       try {
         const data = await postJson(`${root}/portfolio`, {
@@ -1466,6 +1529,8 @@ DASHBOARD_HTML = r"""
         await refreshSummaryPanels();
       } catch (err) {
         setPortfolioFeedback(err.message);
+      } finally {
+        setBusy("add-position", false);
       }
     }
 
@@ -1481,6 +1546,7 @@ DASHBOARD_HTML = r"""
     }
 
     async function saveCurrentOpportunity() {
+      setBusy("save-opportunity", true);
       setFeedback("جاري حفظ الفرصة...");
       try {
         const data = await postJson(`${root}/opportunities`, {
@@ -1497,6 +1563,8 @@ DASHBOARD_HTML = r"""
         await refreshSummaryPanels();
       } catch (err) {
         setFeedback(err.message);
+      } finally {
+        setBusy("save-opportunity", false);
       }
     }
 
@@ -1511,6 +1579,15 @@ DASHBOARD_HTML = r"""
       }
     }
 
+    document.querySelectorAll(".nav button[data-target]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = document.getElementById(btn.dataset.target);
+        if (!target) return;
+        document.querySelectorAll(".nav button").forEach((item) => item.classList.toggle("active", item === btn));
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
     document.getElementById("intervals").addEventListener("click", (event) => {
       const btn = event.target.closest("button");
       if (!btn) return;
@@ -1524,7 +1601,7 @@ DASHBOARD_HTML = r"""
       if (!btn) return;
       selectedMarket = btn.dataset.market;
       [...document.querySelectorAll("#market-tabs button")].forEach(b => b.classList.toggle("active", b === btn));
-      loadSymbols();
+      loadSymbols({ forceFirst: true });
     });
 
     document.getElementById("symbol-search").addEventListener("input", () => {
