@@ -183,7 +183,7 @@ async def cmd_health(msg: Message):
 async def cmd_sync_symbols(msg: Message):
     if not is_admin(msg.from_user.id):
         return await msg.reply("⛔ غير مصرح لك بهذا الأمر.")
-    notice = await msg.answer("🌍 جاري تحديث رموز الأمريكي والكريبتو...")
+    notice = await msg.answer("🌍 جاري تحديث رموز السعودي والأمريكي والكريبتو...")
     try:
         from services.symbol_sync import sync_symbol_universe
 
@@ -1061,8 +1061,8 @@ async def _admin_indicators(cq: CallbackQuery):
 
 
 async def _admin_sync_symbols(cq: CallbackQuery):
-    await cq.answer("بدأ تحديث الرموز، قد يستغرق دقيقة...", show_alert=True)
-    await cq.message.edit_text("🌍 جاري تحديث رموز الأمريكي والكريبتو...\n\nانتظر شوي.")
+    await cq.answer("بدأ تحديث الرموز، قد يستغرق عدة دقائق...", show_alert=True)
+    await cq.message.edit_text("🌍 جاري تحديث رموز السعودي والأمريكي والكريبتو...\n\nانتظر شوي.")
     try:
         from services.symbol_sync import sync_symbol_universe
 

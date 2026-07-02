@@ -1,9 +1,12 @@
 import asyncio
 import csv
+import html
 import io
+import re
 from typing import Any
 
 import requests
+import yfinance as yf
 from loguru import logger
 from sqlalchemy import select
 
@@ -14,6 +17,8 @@ from models import Symbol
 
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+STOCKANALYSIS_SAUDI_URL = "https://stockanalysis.com/list/saudi-stock-exchange/"
+SAUDI_CODE_RANGES = ((1000, 9999),)
 
 
 def _get_text(url: str, timeout: int = 25) -> str:
@@ -30,6 +35,11 @@ def _parse_pipe_table(text: str) -> list[dict[str, str]]:
 
 def _clean_symbol(symbol: str) -> str:
     return (symbol or "").strip().upper().replace("$", "-")
+
+
+def _clean_name(name: str | None, fallback: str) -> str:
+    cleaned = re.sub(r"\s+", " ", name or "").strip()
+    return cleaned or fallback
 
 
 async def _upsert_symbols(items: list[dict[str, Any]]) -> int:
@@ -49,8 +59,14 @@ async def _upsert_symbols(items: list[dict[str, Any]]) -> int:
             key = (item["market"], item["symbol"])
             current = existing.get(key)
             if current:
-                current.name_en = item["name_en"][:180]
-                current.name_ar = current.name_ar or item["name_ar"][:180]
+                name_en = _clean_name(item.get("name_en"), item["symbol"])[:180]
+                name_ar = _clean_name(item.get("name_ar"), name_en)[:180]
+                if name_en and name_en != item["symbol"]:
+                    current.name_en = name_en
+                if name_ar and name_ar != item["symbol"] and (
+                    not current.name_ar or current.name_ar == current.symbol
+                ):
+                    current.name_ar = name_ar
                 current.yahoo_symbol = item["yahoo_symbol"][:40]
                 current.exchange = item.get("exchange") or current.exchange
                 current.currency = item.get("currency") or current.currency
@@ -176,6 +192,135 @@ async def sync_crypto_symbols(limit: int = 1200) -> dict[str, Any]:
     return {"market": "CRYPTO", "fetched": len(items), "added": added}
 
 
+def _parse_stockanalysis_saudi(text: str, limit: int) -> list[dict[str, Any]]:
+    row_pattern = re.compile(
+        r'<a href="/quote/tadawul/(?P<symbol>\d{4})/">(?P=symbol)</a>.*?'
+        r'<td class="slw[^"]*">(?P<name>.*?)</td>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for match in row_pattern.finditer(text):
+        symbol = match.group("symbol")
+        if symbol in seen:
+            continue
+        name = re.sub(r"<.*?>", "", match.group("name"))
+        name = _clean_name(html.unescape(name), symbol)
+        items.append(
+            {
+                "market": "SAUDI",
+                "symbol": symbol,
+                "yahoo_symbol": f"{symbol}.SR",
+                "name_ar": name,
+                "name_en": name,
+                "sector": "Saudi Listed",
+                "category": "Saudi Listed",
+                "exchange": "Saudi Exchange",
+                "currency": "SAR",
+                "asset_type": "stock",
+            }
+        )
+        seen.add(symbol)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _probe_saudi_symbol(symbol: str) -> dict[str, Any] | None:
+    yahoo_symbol = f"{symbol}.SR"
+    try:
+        history = yf.Ticker(yahoo_symbol).history(period="5d", interval="1d")
+    except Exception:
+        return None
+    if history is None or history.empty:
+        return None
+    return {
+        "market": "SAUDI",
+        "symbol": symbol,
+        "yahoo_symbol": yahoo_symbol,
+        "name_ar": symbol,
+        "name_en": symbol,
+        "sector": "Saudi Listed",
+        "category": "Saudi Listed",
+        "exchange": "Saudi Exchange",
+        "currency": "SAR",
+        "asset_type": "stock",
+    }
+
+
+async def _probe_saudi_candidates(candidates: list[str], limit: int) -> list[dict[str, Any]]:
+    semaphore = asyncio.Semaphore(24)
+
+    async def check(symbol: str) -> dict[str, Any] | None:
+        async with semaphore:
+            return await asyncio.to_thread(_probe_saudi_symbol, symbol)
+
+    found: list[dict[str, Any]] = []
+    for start in range(0, len(candidates), 240):
+        batch = candidates[start : start + 240]
+        results = await asyncio.gather(*(check(symbol) for symbol in batch))
+        found.extend(item for item in results if item)
+        if len(found) >= limit:
+            return found[:limit]
+    return found[:limit]
+
+
+async def sync_saudi_symbols(limit: int = 1200) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    try:
+        text = await asyncio.to_thread(_get_text, STOCKANALYSIS_SAUDI_URL, 30)
+        for item in _parse_stockanalysis_saudi(text, limit):
+            items.append(item)
+            seen.add(item["symbol"])
+    except Exception as exc:
+        logger.warning("Saudi stock list fetch failed: {}", exc)
+
+    async with get_session() as session:
+        result = await session.execute(select(Symbol).where(Symbol.market == "SAUDI"))
+        existing_symbols = result.scalars().all()
+
+    for current in existing_symbols:
+        if current.symbol in seen:
+            continue
+        items.append(
+            {
+                "market": "SAUDI",
+                "symbol": current.symbol,
+                "yahoo_symbol": current.yahoo_symbol or f"{current.symbol}.SR",
+                "name_ar": current.name_ar or current.name_en or current.symbol,
+                "name_en": current.name_en or current.name_ar or current.symbol,
+                "sector": current.sector or "Saudi Listed",
+                "category": current.category or "Saudi Listed",
+                "exchange": current.exchange or "Saudi Exchange",
+                "currency": current.currency or "SAR",
+                "asset_type": current.asset_type or "stock",
+            }
+        )
+        seen.add(current.symbol)
+
+    if len(items) < 250:
+        candidates = sorted(
+            {
+                f"{code:04d}"
+                for start, end in SAUDI_CODE_RANGES
+                for code in range(start, end + 1)
+            }
+            - seen
+        )
+        for item in await _probe_saudi_candidates(candidates, limit - len(items)):
+            items.append(item)
+            seen.add(item["symbol"])
+
+    added = await _upsert_symbols(items[:limit])
+    return {"market": "SAUDI", "fetched": len(items[:limit]), "added": added}
+
+
 async def sync_symbol_universe() -> list[dict[str, Any]]:
-    us, crypto = await asyncio.gather(sync_us_symbols(), sync_crypto_symbols())
-    return [us, crypto]
+    saudi, us, crypto = await asyncio.gather(
+        sync_saudi_symbols(),
+        sync_us_symbols(limit=12000),
+        sync_crypto_symbols(limit=5000),
+    )
+    return [saudi, us, crypto]
