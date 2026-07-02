@@ -35,6 +35,15 @@ async def startup():
     except Exception as e:
         logger.exception("Dashboard server failed to start: {}", e)
 
+    try:
+        await _run_bot()
+    except Exception as e:
+        logger.exception("Bot startup failed, keeping dashboard online: {}", e)
+        await asyncio.Event().wait()
+
+
+async def _run_bot():
+    from config import settings
     from database import init_db, engine
     await init_db()
     logger.info("Database initialized (data preserved)")
@@ -97,8 +106,6 @@ async def startup():
     try:
         await dp.start_polling(bot)
     finally:
-        if dashboard_runner:
-            await dashboard_runner.cleanup()
         await scheduler.stop()
         await bot.session.close()
         await engine.dispose()
