@@ -87,6 +87,7 @@ class ActivationCode(Base):
     code: Mapped[str] = mapped_column(String, unique=True)
     plan: Mapped[str] = mapped_column(String)
     duration_days: Mapped[int] = mapped_column(Integer)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
     max_uses: Mapped[int] = mapped_column(Integer, default=1)
     uses: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

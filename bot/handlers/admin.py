@@ -69,6 +69,21 @@ def _code(length=10) -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 
+def _activation_duration_label(code: ActivationCode) -> str:
+    if code.duration_days >= 99999:
+        return "permanent"
+    minutes = int(getattr(code, "duration_minutes", 0) or 0)
+    if minutes:
+        if minutes % 1440 == 0:
+            return f"{minutes // 1440}d"
+        if minutes % 60 == 0:
+            return f"{minutes // 60}h"
+        return f"{minutes}m"
+    if code.duration_days <= 0:
+        return "1h"
+    return f"{code.duration_days}d"
+
+
 @router.message(Command("admin"))
 async def cmd_admin(msg: Message, state: FSMContext = None):
     if not is_admin(msg.from_user.id):
@@ -361,7 +376,7 @@ async def _admin_codes_menu(cq: CallbackQuery):
         text = "🔑 **أكواد التفعيل**\n\n"
         for c in codes:
             active = "✅" if c.is_active else "❌"
-            text += f"{active} {c.code} | {c.plan} | {c.uses}/{c.max_uses}\n"
+            text += f"{active} {c.code} | {c.plan} | {_activation_duration_label(c)} | {c.uses}/{c.max_uses}\n"
     text += "\nاختر إجراء:"
     from bot.keyboards.main import back_button
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -608,13 +623,17 @@ async def handle_create_code_all_in_one(msg: Message, state: FSMContext):
         await msg.answer("❌ الاستخدامات لازم رقم (1 = لمرة وحدة)")
         return
 
+    duration_minutes = 0
     if duration_str == "permanent" or duration_str == "دايم":
         duration_days = 99999
         duration_label = "دايم"
     elif duration_str.endswith("h"):
         try:
             hours = int(duration_str[:-1])
-            duration_days = hours / 24
+            if hours < 1:
+                raise ValueError
+            duration_days = 0
+            duration_minutes = hours * 60
             duration_label = f"{hours} ساعة"
         except ValueError:
             await msg.answer("❌ المدة بالساعات خاطئة. مثال: 12h")
@@ -622,7 +641,10 @@ async def handle_create_code_all_in_one(msg: Message, state: FSMContext):
     elif duration_str.endswith("d"):
         try:
             days = int(duration_str[:-1])
+            if days < 1:
+                raise ValueError
             duration_days = days
+            duration_minutes = days * 24 * 60
             duration_label = f"{days} يوم"
         except ValueError:
             await msg.answer("❌ المدة بالأيام خاطئة. مثال: 30d")
@@ -639,7 +661,8 @@ async def handle_create_code_all_in_one(msg: Message, state: FSMContext):
             ac = ActivationCode(
                 code=code,
                 plan=plan,
-                duration_days=int(duration_days) if duration_days != 99999 else 99999,
+                duration_days=duration_days,
+                duration_minutes=duration_minutes,
                 max_uses=max_uses,
                 uses=0,
                 is_active=True,

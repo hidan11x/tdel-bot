@@ -150,13 +150,18 @@ async def activate_code(code: str, user_id: int) -> str:
 
         ac.uses = (ac.uses or 0) + 1
 
+        now = datetime.now(timezone.utc)
         user.plan = ac.plan
-        user.subscription_start = datetime.now(timezone.utc)
+        user.subscription_start = now
 
         if ac.duration_days >= 99999:
-            user.subscription_end = datetime.now(timezone.utc) + timedelta(days=36525)
+            user.subscription_end = now + timedelta(days=36525)
+        elif getattr(ac, "duration_minutes", 0):
+            user.subscription_end = now + timedelta(minutes=ac.duration_minutes)
+        elif ac.duration_days <= 0:
+            user.subscription_end = now + timedelta(hours=1)
         else:
-            user.subscription_end = datetime.now(timezone.utc) + timedelta(days=ac.duration_days)
+            user.subscription_end = now + timedelta(days=ac.duration_days)
 
         await session.commit()
         return f"تم تفعيل الباقة {ac.plan} بنجاح!"

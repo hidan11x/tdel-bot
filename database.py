@@ -54,3 +54,8 @@ def _run_lightweight_migrations(sync_conn):
         columns = {col["name"] for col in inspector.get_columns("daily_usage")}
         if "ai_messages" not in columns:
             sync_conn.execute(text("ALTER TABLE daily_usage ADD COLUMN ai_messages INTEGER DEFAULT 0"))
+
+    if "activation_codes" in tables:
+        columns = {col["name"] for col in inspector.get_columns("activation_codes")}
+        if "duration_minutes" not in columns:
+            sync_conn.execute(text("ALTER TABLE activation_codes ADD COLUMN duration_minutes INTEGER DEFAULT 0"))
