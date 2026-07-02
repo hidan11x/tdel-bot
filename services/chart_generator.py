@@ -124,6 +124,28 @@ def _add_chip(ax, x: float, y: float, label: str, value: str, color: str) -> Non
     )
 
 
+def _add_fig_chip(fig, x: float, y: float, label: str, value: str, color: str) -> None:
+    fig.text(
+        x,
+        y,
+        f"{label}\n{value}",
+        ha="center",
+        va="center",
+        fontsize=8.2,
+        color="#F4F7FA",
+        fontweight="bold",
+        linespacing=1.25,
+        bbox=dict(
+            boxstyle="round,pad=0.45,rounding_size=0.16",
+            facecolor="#111827",
+            edgecolor=color,
+            linewidth=1.05,
+            alpha=0.96,
+        ),
+        zorder=20,
+    )
+
+
 def _safe_last(series) -> Optional[float]:
     try:
         value = series.iloc[-1]
@@ -312,7 +334,7 @@ def generate_chart(
         change_arrow = "▲" if change_pct >= 0 else "▼"
         change_color = "#26a69a" if change_pct >= 0 else "#ef5350"
         trend_text = _trend_ar(indicators.get("trend"))
-        title_text = f"{display_name}  {symbol}  |  {timeframe}"
+        title_text = f"{symbol} | {market} | {timeframe.upper()}"
 
         kwargs = dict(
             type="candle",
@@ -352,31 +374,36 @@ def generate_chart(
         price_ax = axes[0]
         volume_ax = axes[2] if len(axes) > 2 else None
         rsi_ax = axes[4] if len(axes) > 4 else None
+        fig.subplots_adjust(top=0.875, bottom=0.105, left=0.055, right=0.985, hspace=0.05)
 
-        fig.suptitle(
-            _rtl(title_text),
+        fig.text(
+            0.055,
+            0.965,
+            title_text,
             color="#F8FAFC",
-            fontsize=15,
+            fontsize=14,
             fontweight="bold",
-            x=0.06,
-            y=0.985,
             ha="left",
+            va="center",
         )
-        price_ax.set_title(
-            f"{change_arrow} {_fmt_change(change_pct)}  |  {_fmt_price(current_price)}",
+        fig.text(
+            0.965,
+            0.965,
+            f"{change_arrow} {_fmt_change(change_pct)}  {_fmt_price(current_price)}",
             color=change_color,
-            fontsize=13,
+            fontsize=12.5,
             fontweight="bold",
-            loc="right",
-            pad=14,
+            ha="right",
+            va="center",
         )
+        price_ax.set_title("")
 
         score_color = "#22C55E" if score_value >= 70 else ("#FACC15" if score_value >= 50 else "#EF4444")
-        _add_chip(price_ax, 0.13, 1.075, "Price", _fmt_price(current_price), "#38BDF8")
-        _add_chip(price_ax, 0.33, 1.075, "Change", _fmt_change(change_pct), change_color)
-        _add_chip(price_ax, 0.53, 1.075, "Score", f"{score_value:.0f}/100 {_score_label(score_value)}", score_color)
-        _add_chip(price_ax, 0.73, 1.075, "Risk", risk_label, "#F59E0B")
-        _add_chip(price_ax, 0.91, 1.075, "Trend", trend_text, "#A78BFA")
+        _add_fig_chip(fig, 0.265, 0.965, "Price", _fmt_price(current_price), "#38BDF8")
+        _add_fig_chip(fig, 0.385, 0.965, "Change", _fmt_change(change_pct), change_color)
+        _add_fig_chip(fig, 0.520, 0.965, "Score", f"{score_value:.0f}/100 {_score_label(score_value)}", score_color)
+        _add_fig_chip(fig, 0.650, 0.965, "Risk", risk_label, "#F59E0B")
+        _add_fig_chip(fig, 0.780, 0.965, "Trend", trend_text, "#A78BFA")
 
         if support is not None and support > 0 and current_price > 0:
             s_dist = ((current_price - support) / current_price) * 100
