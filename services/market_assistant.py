@@ -24,6 +24,13 @@ class MarketAssistantResult:
     items: list[dict[str, Any]] | None = None
 
 
+@dataclass
+class ScreenFilter:
+    metric: str
+    direction: str
+    value: float | None = None
+
+
 def _detect_market(text: str) -> str | None:
     lowered = text.lower()
     if any(word in lowered for word in ("السعودي", "تاسي", "نمو", "سعودي")):
@@ -43,6 +50,31 @@ def _extract_price_filter(text: str) -> tuple[str, float] | None:
     word = match.group(1).lower()
     direction = "below" if word in {"تحت", "اقل", "أقل", "below", "under"} else "above"
     return direction, float(match.group(2))
+
+
+def _extract_screen_filter(text: str) -> ScreenFilter | None:
+    lowered = text.lower()
+
+    rsi_match = re.search(r"rsi\s*(تحت|اقل|أقل|below|under|فوق|اكثر|أكثر|above|over)\s*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if rsi_match:
+        word = rsi_match.group(1).lower()
+        direction = "below" if word in {"تحت", "اقل", "أقل", "below", "under"} else "above"
+        return ScreenFilter("rsi", direction, float(rsi_match.group(2)))
+
+    price_filter = _extract_price_filter(text)
+    if price_filter:
+        return ScreenFilter("price", price_filter[0], price_filter[1])
+
+    pct_match = re.search(r"(مرتفع|صاعد|رابح|نازل|هابط|خاسر)\s*(?:فوق|اكثر|أكثر|اقل|أقل|تحت)?\s*(\d+(?:\.\d+)?)?\s*%?", text, re.IGNORECASE)
+    if pct_match:
+        direction = "below" if pct_match.group(1).lower() in {"نازل", "هابط", "خاسر"} else "above"
+        value = float(pct_match.group(2)) if pct_match.group(2) else 0.0
+        return ScreenFilter("change_pct", direction, value)
+
+    if any(word in lowered for word in ("حجم عالي", "حجم تداول عالي", "فوليوم عالي", "volume")):
+        return ScreenFilter("volume_ratio", "above", 1.5)
+
+    return None
 
 
 def _query_token(text: str) -> str:
@@ -82,10 +114,10 @@ async def _resolve_symbol(text: str) -> dict[str, Any] | None:
 
 
 async def analyze_question(text: str) -> MarketAssistantResult:
-    price_filter = _extract_price_filter(text)
+    screen_filter = _extract_screen_filter(text)
     market = _detect_market(text)
-    if price_filter and market:
-        return await screen_by_price(market, price_filter[0], price_filter[1])
+    if screen_filter and market:
+        return await screen_market(market, screen_filter)
 
     detected = await _resolve_symbol(text)
     if not detected:
@@ -94,6 +126,29 @@ async def analyze_question(text: str) -> MarketAssistantResult:
             text="ما قدرت أحدد الرمز. جرّب تكتب الرمز مباشرة مثل AAPL أو 1120 أو BTCUSDT.",
         )
     return await summarize_symbol(detected)
+
+
+def _metrics_from_ohlcv(data: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    if not data:
+        return None
+    closes = [float(row["close"]) for row in data if row.get("close") is not None]
+    if not closes:
+        return None
+    price = closes[-1]
+    prev = closes[-2] if len(closes) >= 2 else closes[-1]
+    change_pct = ((price - prev) / prev * 100) if prev else 0.0
+    rsi = calculate_rsi(closes[-50:]) if len(closes) >= 15 else None
+    volume_ratio = None
+    volumes = [float(row.get("volume", 0) or 0) for row in data]
+    if len(volumes) >= 21:
+        avg_volume = sum(volumes[-21:-1]) / 20
+        volume_ratio = (volumes[-1] / avg_volume) if avg_volume else None
+    return {
+        "price": price,
+        "change_pct": change_pct,
+        "rsi": rsi,
+        "volume_ratio": volume_ratio,
+    }
 
 
 async def summarize_symbol(detected: dict[str, Any]) -> MarketAssistantResult:
@@ -147,44 +202,77 @@ async def summarize_symbol(detected: dict[str, Any]) -> MarketAssistantResult:
 
 
 async def screen_by_price(market: str, direction: str, threshold: float) -> MarketAssistantResult:
+    return await screen_market(market, ScreenFilter("price", direction, threshold))
+
+
+async def screen_market(market: str, screen_filter: ScreenFilter) -> MarketAssistantResult:
     async with get_session() as session:
         result = await session.execute(
             select(Symbol)
             .where(Symbol.market == market, Symbol.is_active == True)
             .order_by(Symbol.is_popular.desc(), Symbol.sort_order)
-            .limit(140)
+            .limit(260)
         )
         symbols = list(result.scalars().all())
 
-    semaphore = asyncio.Semaphore(10)
+    semaphore = asyncio.Semaphore(8)
 
-    async def priced(item: Symbol) -> dict[str, Any] | None:
+    async def measured(item: Symbol) -> dict[str, Any] | None:
         async with semaphore:
-            price = await asyncio.to_thread(get_current_price_sync, item.symbol, item.market)
-        if price is None:
+            data = await asyncio.to_thread(get_ohlcv, item.symbol, item.market, "1d", 70)
+        metrics = _metrics_from_ohlcv(data)
+        if not metrics:
+            async with semaphore:
+                price = await asyncio.to_thread(get_current_price_sync, item.symbol, item.market)
+            if price is None:
+                return None
+            metrics = {"price": float(price), "change_pct": 0.0, "rsi": None, "volume_ratio": None}
+
+        value = metrics.get(screen_filter.metric)
+        if value is None:
             return None
-        if direction == "below" and price >= threshold:
+        threshold = screen_filter.value if screen_filter.value is not None else 0.0
+        if screen_filter.direction == "below" and value >= threshold:
             return None
-        if direction == "above" and price <= threshold:
+        if screen_filter.direction == "above" and value <= threshold:
             return None
         return {
             "symbol": item.symbol,
             "market": item.market,
             "name": item.name_ar or item.name_en or item.symbol,
-            "price": float(price),
+            "price": float(metrics["price"]),
+            "change_pct": float(metrics.get("change_pct") or 0.0),
+            "rsi": metrics.get("rsi"),
+            "volume_ratio": metrics.get("volume_ratio"),
         }
 
-    items = [item for item in await asyncio.gather(*(priced(symbol) for symbol in symbols)) if item]
-    items.sort(key=lambda x: x["price"], reverse=(direction == "below"))
+    items = [item for item in await asyncio.gather(*(measured(symbol) for symbol in symbols)) if item]
+    sort_key = screen_filter.metric if screen_filter.metric in {"price", "change_pct", "rsi", "volume_ratio"} else "price"
+    reverse = screen_filter.direction == "above" or (screen_filter.metric == "price" and screen_filter.direction == "below")
+    items.sort(key=lambda x: x.get(sort_key) if x.get(sort_key) is not None else -999999, reverse=reverse)
     items = items[:10]
 
-    label = "تحت" if direction == "below" else "فوق"
-    lines = [f"🔎 نتائج {MARKET_LABELS.get(market, market)} {label} {threshold:g}", ""]
+    filter_names = {
+        "price": "السعر",
+        "change": "التغير اليومي",
+        "change_pct": "التغير اليومي",
+        "rsi": "RSI",
+        "volume": "حجم التداول",
+        "volume_ratio": "حجم التداول",
+    }
+    metric_name = filter_names.get(screen_filter.metric, screen_filter.metric)
+    label = "تحت" if screen_filter.direction == "below" else "فوق"
+    value_label = f" {screen_filter.value:g}" if screen_filter.value is not None else ""
+    lines = [f"🔎 نتائج {MARKET_LABELS.get(market, market)} | {metric_name} {label}{value_label}", ""]
     if not items:
         lines.append("ما لقيت نتائج مناسبة حالياً من الرموز المتاحة.")
     else:
         for index, item in enumerate(items, start=1):
-            lines.append(f"{index}. {item['name']} ({item['symbol']}) - {item['price']:,.4f}")
+            rsi = f" | RSI {item['rsi']:.1f}" if item.get("rsi") is not None else ""
+            vol = f" | حجم {item['volume_ratio']:.1f}x" if item.get("volume_ratio") is not None else ""
+            lines.append(
+                f"{index}. {item['name']} ({item['symbol']}) - {item['price']:,.4f} | {item['change_pct']:+.2f}%{rsi}{vol}"
+            )
     lines.append("")
     lines.append("اضغط على رمز من الأزرار لتحليله. النتائج من الأسعار المتاحة حالياً وقد تتأخر حسب مزود البيانات.")
     return MarketAssistantResult(kind="screen", text="\n".join(lines), market=market, items=items)

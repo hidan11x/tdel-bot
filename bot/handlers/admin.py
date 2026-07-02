@@ -274,6 +274,8 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_code_disable(cq, int(data.split(":")[1]))
     elif data == "admin_indicators":
         await _admin_indicators(cq)
+    elif data == "admin_sync_symbols":
+        await _admin_sync_symbols(cq)
     elif data == "admin_backup":
         await _admin_backup(cq)
     elif data == "admin_update_notify":
@@ -1039,6 +1041,27 @@ async def _admin_indicators(cq: CallbackQuery):
     )
     await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
     await cq.answer()
+
+
+async def _admin_sync_symbols(cq: CallbackQuery):
+    await cq.answer("بدأ تحديث الرموز، قد يستغرق دقيقة...", show_alert=True)
+    await cq.message.edit_text("🌍 جاري تحديث رموز الأمريكي والكريبتو...\n\nانتظر شوي.")
+    try:
+        from services.symbol_sync import sync_symbol_universe
+
+        results = await sync_symbol_universe()
+        lines = ["✅ تم تحديث الرموز\n"]
+        for item in results:
+            lines.append(
+                f"{item['market']}: تم جلب {item['fetched']} | جديد {item['added']}"
+            )
+        lines.append("\nبعد التحديث جرّب: الأمريكي تحت 150 أو الكريبتو تحت 1")
+        await cq.message.edit_text("\n".join(lines), reply_markup=back_button("admin_panel"))
+    except Exception as exc:
+        await cq.message.edit_text(
+            f"❌ تعذر تحديث الرموز حالياً:\n{str(exc)[:500]}",
+            reply_markup=back_button("admin_panel"),
+        )
 
 
 async def _admin_backup(cq: CallbackQuery):
