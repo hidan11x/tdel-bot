@@ -10,6 +10,7 @@ BOT_COMMANDS = [
     BotCommand(command="plans", description="💳 الخطط"),
     BotCommand(command="subscribe", description="💰 الاشتراك"),
     BotCommand(command="daily", description="📅 التقرير اليومي"),
+    BotCommand(command="ai", description="🤖 مساعد الذكاء VIP"),
     BotCommand(command="scan", description="📊 فحص سريع"),
     BotCommand(command="support", description="🛠 الدعم"),
     BotCommand(command="whoami", description="👤 رقم حسابي وحالة الأدمن"),

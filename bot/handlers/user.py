@@ -149,7 +149,8 @@ async def cmd_help(message: Message):
         "/status - حالة الأسواق\n"
         "/profile - ملفي الشخصي\n"
         "/plans - خطط الاشتراك\n"
-        "/subscribe - الاشتراك\n\n"
+        "/subscribe - الاشتراك\n"
+        "/ai - مساعد الذكاء لمشتركي VIP\n\n"
         "يمكنك استخدام الأزرار أدناه للتنقل بين القوائم."
     )
     await message.answer(text, reply_markup=main_menu("vip"))
@@ -238,6 +239,55 @@ async def cmd_dashboard(message: Message):
     user = await _get_user(message.from_user.id)
     plan = user.plan if user else "free"
     await _send_dashboard_link(message, message.from_user.id, plan)
+
+
+async def _open_ai_assistant(message: Message, telegram_id: int):
+    from services.ai_assistant import AI_CHAT_CONTEXT, can_use_ai
+
+    user = await _get_user(telegram_id)
+    ok, reason, remaining, limit = await can_use_ai(user, telegram_id)
+    if not ok:
+        await message.answer(reason, reply_markup=back_button("subscription"))
+        return
+
+    _user_context[telegram_id] = {"context": AI_CHAT_CONTEXT}
+    await message.answer(
+        "🤖 مساعد الذكاء جاهز.\n\n"
+        "اسألني عن سهم، مؤشر، فرصة، مخاطرة، أو اكتب اسم الشركة مباشرة.\n"
+        "مثال: حلل لي الراجحي\n"
+        "مثال: قارن أبل مع مايكروسوفت\n\n"
+        f"المتبقي اليوم: {remaining}/{limit}\n"
+        "اكتب خروج لإنهاء المحادثة.",
+        reply_markup=back_button("main_menu"),
+    )
+
+
+@router.message(Command("ai"))
+async def cmd_ai(message: Message):
+    await _open_ai_assistant(message, message.from_user.id)
+
+
+@router.callback_query(F.data == "ai_assistant")
+async def cb_ai_assistant(callback: CallbackQuery):
+    await callback.answer()
+    from services.ai_assistant import AI_CHAT_CONTEXT, can_use_ai
+
+    user = await _get_user(callback.from_user.id)
+    ok, reason, remaining, limit = await can_use_ai(user, callback.from_user.id)
+    if not ok:
+        await callback.message.edit_text(reason, reply_markup=back_button("subscription"))
+        return
+
+    _user_context[callback.from_user.id] = {"context": AI_CHAT_CONTEXT}
+    await callback.message.edit_text(
+        "🤖 مساعد الذكاء جاهز.\n\n"
+        "اسألني عن سهم، مؤشر، فرصة، مخاطرة، أو اكتب اسم الشركة مباشرة.\n"
+        "مثال: حلل لي الراجحي\n"
+        "مثال: قارن أبل مع مايكروسوفت\n\n"
+        f"المتبقي اليوم: {remaining}/{limit}\n"
+        "اكتب خروج لإنهاء المحادثة.",
+        reply_markup=back_button("main_menu"),
+    )
 
 
 @router.callback_query(F.data == "daily_reports")
@@ -840,6 +890,47 @@ async def _auto_search(message: Message, query: str):
     await msg.edit_text(text, reply_markup=kb)
 
 
+async def handle_ai_chat_input(message: Message):
+    telegram_id = message.from_user.id
+    question = (message.text or "").strip()
+    if question.lower() in {"خروج", "الغاء", "إلغاء", "ايقاف", "وقف", "exit", "stop"}:
+        from services.ai_assistant import clear_ai_history
+
+        clear_ai_history(telegram_id)
+        _user_context.pop(telegram_id, None)
+        await message.answer("تم إغلاق مساعد الذكاء.", reply_markup=main_menu("vip"))
+        return
+
+    if len(question) < 2:
+        await message.answer("اكتب سؤالك أو اسم السهم.")
+        return
+
+    user = await _get_user(telegram_id)
+    if not user:
+        _user_context.pop(telegram_id, None)
+        await message.answer("اضغط /start أولاً لتفعيل حسابك.")
+        return
+
+    wait_msg = await message.answer("🤖 أفكر وأراجع بيانات السوق...")
+    try:
+        from services.ai_assistant import build_ai_reply, safe_telegram_text
+
+        answer, remaining, limit = await build_ai_reply(user, telegram_id, question)
+        suffix = f"\n\nالمتبقي اليوم: {remaining}/{limit}\nاكتب خروج لإنهاء المحادثة."
+        await wait_msg.edit_text(
+            safe_telegram_text(answer + suffix),
+            reply_markup=back_button("main_menu"),
+        )
+    except Exception:
+        from loguru import logger
+
+        logger.exception("AI chat failed")
+        await wait_msg.edit_text(
+            "تعذر تشغيل مساعد الذكاء حالياً. جرّب بعد قليل.",
+            reply_markup=back_button("main_menu"),
+        )
+
+
 @router.message(F.text)
 async def handle_text_input(message: Message):
     telegram_id = message.from_user.id
@@ -878,6 +969,9 @@ async def handle_text_input(message: Message):
         elif context_type == "private_prediction":
             from bot.handlers.features import handle_private_prediction_input
             await handle_private_prediction_input(message)
+            return
+        elif context_type == "ai_chat":
+            await handle_ai_chat_input(message)
             return
         elif context_type == "fib_scan":
             await handle_fib_input(message)

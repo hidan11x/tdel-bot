@@ -233,6 +233,7 @@ class DailyUsage(Base):
     date: Mapped[date] = mapped_column(Date)
     scans: Mapped[int] = mapped_column(Integer, default=0)
     alerts_triggered: Mapped[int] = mapped_column(Integer, default=0)
+    ai_messages: Mapped[int] = mapped_column(Integer, default=0)
 
     user: Mapped["User"] = relationship("User", back_populates="daily_usage")
 

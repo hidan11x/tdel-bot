@@ -67,6 +67,16 @@ async def _check_yfinance() -> str:
         return _fail(f"Yahoo Finance غير متاح: {_short(str(exc), 80)}")
 
 
+async def _check_ai() -> str:
+    if not settings.ai_enabled:
+        return _warn("مساعد الذكاء معطل")
+    if settings.ai_provider != "gemini":
+        return _warn(f"مساعد الذكاء مضبوط على {settings.ai_provider}")
+    if not settings.gemini_api_key:
+        return _warn("Gemini يحتاج GEMINI_API_KEY")
+    return _ok(f"Gemini AI جاهز ({settings.gemini_model})")
+
+
 async def build_admin_health_report() -> str:
     started = time.perf_counter()
     now_local = settings.now()
@@ -112,7 +122,7 @@ async def build_admin_health_report() -> str:
     except Exception as exc:
         db_line = _fail(f"{_safe_database_label()}: {_short(str(exc), 90)}")
 
-    provider_lines = await asyncio.gather(_check_yfinance(), _check_binance())
+    provider_lines = await asyncio.gather(_check_yfinance(), _check_binance(), _check_ai())
     elapsed_ms = round((time.perf_counter() - started) * 1000)
 
     lines = [

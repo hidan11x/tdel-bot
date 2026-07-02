@@ -39,14 +39,18 @@ def _run_lightweight_migrations(sync_conn):
 
     inspector = inspect(sync_conn)
     tables = set(inspector.get_table_names())
-    if "portfolio_positions" not in tables:
-        return
-
-    columns = {col["name"] for col in inspector.get_columns("portfolio_positions")}
     dialect = sync_conn.dialect.name
-    float_type = "DOUBLE PRECISION" if dialect == "postgresql" else "FLOAT"
 
-    if "target_price" not in columns:
-        sync_conn.execute(text(f"ALTER TABLE portfolio_positions ADD COLUMN target_price {float_type}"))
-    if "stop_loss" not in columns:
-        sync_conn.execute(text(f"ALTER TABLE portfolio_positions ADD COLUMN stop_loss {float_type}"))
+    if "portfolio_positions" in tables:
+        columns = {col["name"] for col in inspector.get_columns("portfolio_positions")}
+        float_type = "DOUBLE PRECISION" if dialect == "postgresql" else "FLOAT"
+
+        if "target_price" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE portfolio_positions ADD COLUMN target_price {float_type}"))
+        if "stop_loss" not in columns:
+            sync_conn.execute(text(f"ALTER TABLE portfolio_positions ADD COLUMN stop_loss {float_type}"))
+
+    if "daily_usage" in tables:
+        columns = {col["name"] for col in inspector.get_columns("daily_usage")}
+        if "ai_messages" not in columns:
+            sync_conn.execute(text("ALTER TABLE daily_usage ADD COLUMN ai_messages INTEGER DEFAULT 0"))

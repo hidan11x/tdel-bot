@@ -72,6 +72,16 @@ class Settings:
 
     chart_theme: str = field(default_factory=lambda: _env("CHART_THEME", "dark"))
 
+    ai_enabled: bool = field(default_factory=lambda: _env("AI_ENABLED", "true").lower() == "true")
+    ai_provider: str = field(default_factory=lambda: _env("AI_PROVIDER", "gemini").lower())
+    gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
+    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash"))
+    ai_daily_limit_basic: int = field(default_factory=lambda: _int("AI_DAILY_LIMIT_BASIC", 0))
+    ai_daily_limit_pro: int = field(default_factory=lambda: _int("AI_DAILY_LIMIT_PRO", 0))
+    ai_daily_limit_vip: int = field(default_factory=lambda: _int("AI_DAILY_LIMIT_VIP", 30))
+    ai_daily_limit_admin: int = field(default_factory=lambda: _int("AI_DAILY_LIMIT_ADMIN", 200))
+    ai_max_history: int = field(default_factory=lambda: max(2, _int("AI_MAX_HISTORY", 6)))
+
     @property
     def timezone(self) -> ZoneInfo:
         try:

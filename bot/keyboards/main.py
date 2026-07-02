@@ -29,7 +29,7 @@ PLAN_FEATURES = {
         "sector_performance", "my_news_alerts", "my_stats", "dividends", "rs_compare",
         "my_alerts", "price_trackers", "my_watchlist", "chart_menu", "top_readings",
         "share_menu", "export_history", "referral_menu",
-        "my_profile", "language_toggle",
+        "ai_assistant", "my_profile", "language_toggle",
         "subscription", "support_ticket", "support", "help", "terms",
     ],
 }
@@ -64,6 +64,7 @@ ALL_BUTTONS: list[tuple[str, str]] = [
     ("📤 مشاركة تحليل", "share_menu"),
     ("📥 تصدير سجلي", "export_history"),
     ("🎁 دعوة صديق", "referral_menu"),
+    ("🤖 مساعد الذكاء", "ai_assistant"),
     ("👤 حسابي", "my_profile"),
     ("🌐 اللغة", "language_toggle"),
     ("💳 الاشتراك", "subscription"),
@@ -79,13 +80,14 @@ MAIN_MENU_BUTTONS = ALL_BUTTONS
 def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🌐 لوحة VIP", callback_data="vip_dashboard")
+    builder.button(text="🤖 مساعد الذكاء", callback_data="ai_assistant")
     builder.button(text="📊 التحليل والفحص", callback_data="menu:analysis")
     builder.button(text="🌍 الأسواق", callback_data="menu:markets")
     builder.button(text="🔔 المتابعة والتنبيهات", callback_data="menu:watch")
     builder.button(text="📈 التقارير والفرص", callback_data="menu:reports")
     builder.button(text="🧰 أدوات احترافية", callback_data="menu:tools")
     builder.button(text="👤 حسابي والدعم", callback_data="menu:account")
-    builder.adjust(1, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -122,6 +124,7 @@ def section_menu(section: str, plan: str = "vip", private_signals: bool = False)
             ("📥 تصدير سجلي", "export_history"),
         ],
         "tools": [
+            ("🤖 مساعد الذكاء", "ai_assistant"),
             ("📊 مقارنة", "compare"),
             ("🔍 فاحص السوق", "screener_menu"),
             ("📐 فيبوناتشي", "fib_menu"),
