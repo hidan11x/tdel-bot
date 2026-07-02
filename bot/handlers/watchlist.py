@@ -125,6 +125,13 @@ async def cb_watch_add(callback: CallbackQuery):
         session.add(watchlist_item)
         await session.commit()
 
+    try:
+        from services.vip_engagement import award_points
+
+        await award_points(user.id, "watchlist", note=symbol)
+    except Exception:
+        pass
+
     await callback.message.edit_text(
         f"✅ تمت إضافة {symbol} إلى قائمة المتابعة.",
         reply_markup=back_button("my_watchlist"),
@@ -297,6 +304,13 @@ async def handle_watchlist_symbol_input(message: Message):
         )
         session.add(item)
         await session.commit()
+
+    try:
+        from services.vip_engagement import award_points
+
+        await award_points(user.id, "watchlist", note=symbol)
+    except Exception:
+        pass
 
     _user_context.pop(telegram_id, None)
     await message.answer(

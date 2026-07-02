@@ -72,6 +72,12 @@ async def _perform_scan_and_report(
         return
 
     await increment_scan(user_id)
+    try:
+        from services.vip_engagement import award_points
+
+        await award_points(user_id, "scan", note=f"{symbol} {timeframe}")
+    except Exception:
+        pass
 
     score_val = result.get("score")
     score_num = float(score_val.overall) if score_val else None

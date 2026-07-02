@@ -106,6 +106,12 @@ class ReportScheduler:
             id="daily_summary",
             replace_existing=True,
         )
+        self.scheduler.add_job(
+            self.evaluate_daily_contest,
+            self._cron(23, 45),
+            id="daily_contest_eval",
+            replace_existing=True,
+        )
         if settings.news_notifications_enabled:
             self.scheduler.add_job(
                 self.send_news_notifications_job,
@@ -410,6 +416,40 @@ class ReportScheduler:
             logger.info("Daily market summary sent to {} users", len(users))
         except Exception:
             logger.exception("send_daily_market_summary failed")
+
+    async def evaluate_daily_contest(self):
+        try:
+            from services.vip_engagement import evaluate_contest_predictions
+
+            results = await evaluate_contest_predictions()
+            if not results:
+                return
+
+            top = results[:5]
+            top_text = "\n".join(
+                [
+                    f"{idx}. {item['first_name']} | {item['symbol']} | فرق {item['diff_pct']:.2f}%"
+                    for idx, item in enumerate(top, 1)
+                ]
+            )
+            for item in results:
+                try:
+                    message = (
+                        "🏁 نتيجة مسابقة التوقع اليومي\n\n"
+                        f"رمزك: {item['symbol']}\n"
+                        f"توقعك: {item['target_price']:,.4f}\n"
+                        f"السعر الفعلي: {item['actual_price']:,.4f}\n"
+                        f"الفرق: {item['diff_pct']:.2f}%\n"
+                        f"نقاط المسابقة: {item['score_points']}\n\n"
+                        f"أفضل المشاركين:\n{top_text}"
+                    )
+                    await self.bot.send_message(item["telegram_id"], message[:4000])
+                    await asyncio.sleep(0.1)
+                except Exception:
+                    continue
+            logger.info("Daily contest evaluated for {} users", len(results))
+        except Exception:
+            logger.exception("evaluate_daily_contest failed")
 
     async def send_news_notifications_job(self):
         try:

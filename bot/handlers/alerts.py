@@ -165,6 +165,12 @@ async def handle_alert_value_input(message: Message):
 
     try:
         alert = await create_alert(user.id, symbol, market, alert_type, value)
+        try:
+            from services.vip_engagement import award_points
+
+            await award_points(user.id, "alert", note=symbol)
+        except Exception:
+            pass
         _user_context.pop(telegram_id, None)
         await message.answer(
             f"✅ تم إنشاء التنبيه بنجاح!\n\n{symbol}: {ALERT_TYPE_NAMES.get(alert_type, alert_type)} = {value}",

@@ -426,6 +426,36 @@ class PriceTracker(Base):
     user: Mapped["User"] = relationship("User", backref="price_trackers")
 
 
+class LoyaltyEvent(Base):
+    __tablename__ = "loyalty_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    event_type: Mapped[str] = mapped_column(String)
+    points: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    user: Mapped["User"] = relationship("User", backref="loyalty_events")
+
+
+class ContestPrediction(Base):
+    __tablename__ = "contest_predictions"
+    __table_args__ = (UniqueConstraint("user_id", "prediction_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    symbol: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)
+    target_price: Mapped[float] = mapped_column(Float)
+    prediction_date: Mapped[date] = mapped_column(Date)
+    actual_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_points: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    user: Mapped["User"] = relationship("User", backref="contest_predictions")
+
+
 class SharedAnalysis(Base):
     __tablename__ = "shared_analyses"
 

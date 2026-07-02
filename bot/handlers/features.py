@@ -5,7 +5,7 @@ from sqlalchemy import select
 from loguru import logger
 
 from database import get_session
-from models import User
+from models import PortfolioPosition, User
 from services.price_tracker import (
     create_price_tracker, get_user_price_trackers, deactivate_price_tracker,
 )
@@ -17,6 +17,7 @@ from services.social import (
     export_scan_history_csv, get_user_scan_history, REFERRAL_REWARD_HOURS, REFERRAL_TARGET,
 )
 from services.symbols_service import get_symbol_info
+from services.search_engine import auto_detect_symbol
 from services.feature_access import PREDICTION_FEATURE, has_feature_access
 from services.private_prediction import build_private_prediction
 from bot.keyboards.main import back_button
@@ -25,6 +26,34 @@ from config import settings
 from . import _user_context
 
 router = Router()
+
+
+def _fmt_money(value) -> str:
+    if value is None:
+        return "غير متوفر"
+    try:
+        number = float(value)
+    except Exception:
+        return str(value)
+    if abs(number) >= 1000:
+        return f"{number:,.2f}"
+    if abs(number) >= 1:
+        return f"{number:.4f}"
+    return f"{number:.6f}"
+
+
+def _vip_actions_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🚀 رادار الفرص", callback_data="opportunity_radar")
+    builder.button(text="💼 محفظتي", callback_data="portfolio_menu")
+    builder.button(text="🧠 تنبيه ذكي", callback_data="smart_alerts")
+    builder.button(text="🏁 مسابقة اليوم", callback_data="contest_daily")
+    builder.button(text="🎖 نقاطي", callback_data="loyalty_points")
+    builder.button(text="⚡ نبض السوق", callback_data="market_pulse")
+    builder.button(text="🌐 لوحة VIP", callback_data="vip_dashboard")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(2, 2, 2, 1, 1)
+    return builder.as_markup()
 
 
 async def _get_user(telegram_id: int):
@@ -44,6 +73,341 @@ async def _is_vip_user(telegram_id: int) -> bool:
 
 async def _can_use_prediction(telegram_id: int) -> bool:
     return await has_feature_access(telegram_id, PREDICTION_FEATURE)
+
+
+@router.callback_query(F.data == "vip_center")
+async def cb_vip_center(callback: CallbackQuery):
+    await callback.answer()
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+    if not await _is_vip_user(callback.from_user.id):
+        await callback.message.edit_text(
+            "مركز VIP متاح لمشتركي VIP فقط.\n\nتقدر تشوف الخطط أو تتواصل مع الدعم للتفعيل.",
+            reply_markup=back_button("subscription"),
+        )
+        return
+    await callback.message.edit_text("جاري تجهيز مركز VIP...")
+    from services.vip_engagement import build_vip_center_text
+
+    text = await build_vip_center_text(user)
+    await callback.message.edit_text(text[:4000], reply_markup=_vip_actions_keyboard())
+
+
+@router.callback_query(F.data == "market_pulse")
+async def cb_market_pulse(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("جاري قراءة نبض السوق...")
+    from services.vip_engagement import build_market_pulse_text
+
+    text = await build_market_pulse_text()
+    await callback.message.edit_text(text[:4000], reply_markup=back_button("menu:reports"))
+
+
+@router.callback_query(F.data == "loyalty_points")
+async def cb_loyalty_points(callback: CallbackQuery):
+    await callback.answer()
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+    from services.vip_engagement import get_loyalty_summary
+
+    summary = await get_loyalty_summary(user.id)
+    lines = [
+        "🎖 نقاط الولاء",
+        "",
+        f"رصيدك: {summary['points']} نقطة",
+        f"المتبقي للمكافأة القادمة: {summary['next_reward_points']} نقطة",
+        "كل 120 نقطة = ساعة VIP يمكن لصاحب البوت تفعيلها لك.",
+        "",
+        "آخر الحركات:",
+    ]
+    for event in summary["events"]:
+        note = f" | {event.note}" if event.note else ""
+        lines.append(f"+{event.points} {event.event_type}{note}")
+    if not summary["events"]:
+        lines.append("لا توجد نقاط حتى الآن.")
+    await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=back_button("menu:reports"))
+
+
+@router.callback_query(F.data == "contest_daily")
+async def cb_contest_daily(callback: CallbackQuery):
+    await callback.answer()
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+    from services.vip_engagement import get_contest_summary
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🏁 تسجيل توقع", callback_data="contest_enter")
+    builder.button(text="↩️ رجوع", callback_data="menu:reports")
+    builder.adjust(1)
+    text = await get_contest_summary(user.id)
+    await callback.message.edit_text(text[:4000], reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "contest_enter")
+async def cb_contest_enter(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "contest_prediction"}
+    await callback.message.edit_text(
+        "اكتب توقعك بهذا الشكل:\n\n"
+        "الرمز السعر_المتوقع\n\n"
+        "أمثلة:\n"
+        "الراجحي 67.5\n"
+        "AAPL 210\n"
+        "BTCUSDT 65000",
+        reply_markup=back_button("contest_daily"),
+    )
+
+
+async def handle_contest_prediction_input(message: Message):
+    from services.vip_engagement import submit_contest_prediction
+
+    ok, text = await submit_contest_prediction(message.from_user.id, message.text.strip())
+    _user_context.pop(message.from_user.id, None)
+    await message.answer(text[:4000], reply_markup=back_button("contest_daily"))
+
+
+@router.callback_query(F.data == "portfolio_menu")
+async def cb_portfolio_menu(callback: CallbackQuery):
+    await callback.answer()
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+
+    async with get_session() as session:
+        positions = (
+            await session.execute(
+                select(PortfolioPosition)
+                .where(PortfolioPosition.user_id == user.id)
+                .order_by(PortfolioPosition.created_at.desc())
+                .limit(15)
+            )
+        ).scalars().all()
+
+    builder = InlineKeyboardBuilder()
+    lines = ["💼 محفظتي", ""]
+    total_value = 0.0
+    total_pnl = 0.0
+    if positions:
+        for index, position in enumerate(positions, 1):
+            current = get_current_price_sync(position.symbol, position.market)
+            pnl = None
+            pnl_pct = None
+            if current is not None:
+                total_value += current * position.quantity
+                pnl = (current - position.entry_price) * position.quantity
+                total_pnl += pnl
+                cost = position.entry_price * position.quantity
+                pnl_pct = (pnl / cost * 100) if cost else 0.0
+            status = "مفتوحة" if position.status == "open" else "مغلقة"
+            lines.append(f"{index}. {position.symbol} | {status}")
+            lines.append(
+                f"   دخول {_fmt_money(position.entry_price)} | كمية {_fmt_money(position.quantity)} | الحالي {_fmt_money(current)}"
+            )
+            if pnl is not None:
+                lines.append(f"   ربح/خسارة {_fmt_money(pnl)} ({pnl_pct:+.2f}%)")
+            if position.status == "open":
+                builder.button(text=f"إغلاق {position.symbol}", callback_data=f"portfolio_close:{position.id}")
+            lines.append("")
+    else:
+        lines.append("ما عندك صفقات محفوظة حتى الآن.")
+
+    lines.extend(
+        [
+            f"القيمة التقريبية: {_fmt_money(total_value)}",
+            f"إجمالي الربح/الخسارة: {_fmt_money(total_pnl)}",
+            "",
+            "لإضافة صفقة اكتب: الاسم سعر_الدخول الكمية الهدف الوقف",
+            "مثال: الراجحي 66 10 70 63",
+        ]
+    )
+    builder.button(text="➕ إضافة صفقة", callback_data="portfolio_add")
+    builder.button(text="🌐 فتح الداشبورد", callback_data="vip_dashboard")
+    builder.button(text="↩️ رجوع", callback_data="menu:watch")
+    builder.adjust(2, 1, 1)
+    await callback.message.edit_text("\n".join(lines)[:4000], reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "portfolio_add")
+async def cb_portfolio_add(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "portfolio_add"}
+    await callback.message.edit_text(
+        "أرسل الصفقة بهذا الشكل:\n\n"
+        "اسم_السهم سعر_الدخول الكمية الهدف الوقف\n\n"
+        "أمثلة:\n"
+        "الراجحي 66 10 70 63\n"
+        "AAPL 190 2 210 180\n"
+        "BTCUSDT 62000 0.05 65000 60000",
+        reply_markup=back_button("portfolio_menu"),
+    )
+
+
+async def handle_portfolio_add_input(message: Message):
+    import re
+
+    text = message.text.strip()
+    numbers = list(re.finditer(r"-?\d+(?:[.,]\d+)?", text))
+    if len(numbers) < 2:
+        await message.answer("الصيغة ناقصة. مثال: الراجحي 66 10 70 63", reply_markup=back_button("portfolio_menu"))
+        return
+
+    symbol_query = text[: numbers[0].start()].strip()
+    values = [float(match.group(0).replace(",", "")) for match in numbers]
+    if not symbol_query:
+        await message.answer("اكتب اسم السهم أو رمزه قبل الأرقام.", reply_markup=back_button("portfolio_menu"))
+        return
+
+    detected = await auto_detect_symbol(symbol_query)
+    if not detected:
+        await message.answer("ما قدرت أتعرف على الرمز. جرب: الراجحي، AAPL، BTCUSDT", reply_markup=back_button("portfolio_menu"))
+        return
+
+    user = await _get_user(message.from_user.id)
+    if not user:
+        await message.answer("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+
+    entry_price = values[0]
+    quantity = values[1]
+    target_price = values[2] if len(values) >= 3 else None
+    stop_loss = values[3] if len(values) >= 4 else None
+    async with get_session() as session:
+        position = PortfolioPosition(
+            user_id=user.id,
+            symbol=detected["symbol"],
+            market=detected["market"],
+            entry_price=entry_price,
+            quantity=quantity,
+            target_price=target_price,
+            stop_loss=stop_loss,
+            status="open",
+        )
+        session.add(position)
+        await session.commit()
+
+    try:
+        from services.vip_engagement import award_points
+
+        await award_points(user.id, "portfolio", note=detected["symbol"])
+    except Exception:
+        pass
+    _user_context.pop(message.from_user.id, None)
+    await message.answer(
+        "تمت إضافة الصفقة للمحفظة.\n\n"
+        f"{detected['symbol']} | دخول {_fmt_money(entry_price)} | كمية {_fmt_money(quantity)}\n"
+        f"هدف: {_fmt_money(target_price)} | وقف: {_fmt_money(stop_loss)}",
+        reply_markup=back_button("portfolio_menu"),
+    )
+
+
+@router.callback_query(F.data.startswith("portfolio_close:"))
+async def cb_portfolio_close(callback: CallbackQuery):
+    await callback.answer()
+    position_id = int(callback.data.split(":", 1)[1])
+    user = await _get_user(callback.from_user.id)
+    if not user:
+        await callback.message.edit_text("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+    async with get_session() as session:
+        position = await session.get(PortfolioPosition, position_id)
+        if not position or position.user_id != user.id:
+            await callback.message.edit_text("الصفقة غير موجودة.", reply_markup=back_button("portfolio_menu"))
+            return
+        current = get_current_price_sync(position.symbol, position.market)
+        position.status = "closed"
+        position.exit_price = current or position.entry_price
+        position.closed_at = settings.now()
+        await session.commit()
+    await callback.message.edit_text("تم إغلاق الصفقة.", reply_markup=back_button("portfolio_menu"))
+
+
+@router.callback_query(F.data == "smart_alerts")
+async def cb_smart_alerts(callback: CallbackQuery):
+    await callback.answer()
+    _user_context[callback.from_user.id] = {"context": "smart_alert"}
+    await callback.message.edit_text(
+        "اكتب التنبيه بجملة بسيطة:\n\n"
+        "الراجحي فوق 70\n"
+        "AAPL تحت 180\n"
+        "BTCUSDT تغير 5\n"
+        "الراجحي دعم\n"
+        "NVDA مقاومة\n"
+        "BTCUSDT RSI تحت 30\n\n"
+        "البوت يحولها تلقائياً لتنبيه مناسب.",
+        reply_markup=back_button("menu:watch"),
+    )
+
+
+async def handle_smart_alert_input(message: Message):
+    import re
+    from services.alerts_engine import create_alert
+    from services.subscriptions import can_add_alert
+
+    raw = message.text.strip()
+    numbers = list(re.finditer(r"-?\d+(?:[.,]\d+)?", raw))
+    symbol_query = raw
+    if numbers:
+        symbol_query = raw[: numbers[0].start()]
+    for token in ["فوق", "تحت", "اقل", "أقل", "اعلى", "أعلى", "دعم", "مقاومة", "تغير", "حجم", "RSI", "rsi"]:
+        symbol_query = symbol_query.replace(token, " ")
+    symbol_query = " ".join(symbol_query.split())
+    detected = await auto_detect_symbol(symbol_query or raw.split()[0])
+    if not detected:
+        await message.answer("ما قدرت أتعرف على الرمز. جرب: الراجحي فوق 70", reply_markup=back_button("smart_alerts"))
+        return
+
+    lowered = raw.lower()
+    value = float(numbers[0].group(0).replace(",", "")) if numbers else 2.0
+    if "دعم" in raw:
+        alert_type = "near_support"
+        value = 2.0
+    elif "مقاومة" in raw:
+        alert_type = "near_resistance"
+        value = 2.0
+    elif "rsi" in lowered:
+        alert_type = "rsi_below" if ("تحت" in raw or "اقل" in raw or "أقل" in raw or "below" in lowered) else "rsi_above"
+    elif "حجم" in raw:
+        alert_type = "volume_spike"
+        value = 1.5
+    elif "تغير" in raw or "%" in raw:
+        alert_type = "price_change_percent"
+        value = abs(value)
+    elif "تحت" in raw or "اقل" in raw or "أقل" in raw or "below" in lowered:
+        alert_type = "price_below"
+    else:
+        alert_type = "price_above"
+
+    user = await _get_user(message.from_user.id)
+    if not user:
+        await message.answer("اضغط /start أولاً لتفعيل حسابك.", reply_markup=back_button("main_menu"))
+        return
+    if not await can_add_alert(user.id):
+        await message.answer("وصلت حد التنبيهات في خطتك.", reply_markup=back_button("subscription"))
+        return
+
+    alert = await create_alert(user.id, detected["symbol"], detected["market"], alert_type, value)
+    try:
+        from services.vip_engagement import award_points
+
+        await award_points(user.id, "alert", note=detected["symbol"])
+    except Exception:
+        pass
+    _user_context.pop(message.from_user.id, None)
+    await message.answer(
+        "تم إنشاء التنبيه الذكي.\n\n"
+        f"الرمز: {alert.symbol}\n"
+        f"السوق: {alert.market}\n"
+        f"النوع: {alert.alert_type}\n"
+        f"القيمة: {_fmt_money(alert.value)}",
+        reply_markup=back_button("my_alerts"),
+    )
 
 
 @router.callback_query(F.data == "private_prediction")

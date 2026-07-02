@@ -15,7 +15,9 @@ from models import (
     AffiliateCommission,
     AffiliatePartner,
     Alert,
+    ContestPrediction,
     ErrorLog,
+    LoyaltyEvent,
     PortfolioPosition,
     SavedOpportunity,
     ScanLog,
@@ -254,6 +256,19 @@ async def dashboard_summary(request: web.Request) -> web.Response:
                 select(func.count(ErrorLog.id)).where(func.date(ErrorLog.created_at) == today)
             )
         ).scalar() or 0
+        loyalty_points = (
+            await session.execute(
+                select(func.coalesce(func.sum(LoyaltyEvent.points), 0)).where(LoyaltyEvent.user_id == user.id)
+            )
+        ).scalar() or 0
+        contest_today = (
+            await session.execute(
+                select(ContestPrediction).where(
+                    ContestPrediction.user_id == user.id,
+                    ContestPrediction.prediction_date == today,
+                )
+            )
+        ).scalar_one_or_none()
 
     market_status = YahooFinanceProvider.get_market_status()
     watchlist_symbols = [_symbol_payload(item) for item in watchlist[:30]]
@@ -310,6 +325,18 @@ async def dashboard_summary(request: web.Request) -> web.Response:
                 "items": saved_payload,
                 "count": len(saved_payload),
                 "winners": len(saved_winners),
+            },
+            "engagement": {
+                "loyalty_points": int(loyalty_points),
+                "next_reward_points": max(0, 120 - (int(loyalty_points) % 120)),
+                "contest_today": {
+                    "symbol": contest_today.symbol,
+                    "market": contest_today.market,
+                    "target_price": contest_today.target_price,
+                    "score_points": contest_today.score_points,
+                }
+                if contest_today
+                else None,
             },
             "last_scans": [
                 {
@@ -1474,6 +1501,8 @@ DASHBOARD_HTML = r"""
       const pnl = Number(portfolio.total_pnl || 0);
       const pnlClass = pnl >= 0 ? "up" : "down";
       const alertsCount = summary?.alerts?.filter(a => a.is_active).length || 0;
+      const engagement = summary?.engagement || {};
+      const contest = engagement.contest_today;
       box.innerHTML = `
         <div class="scan-row">
           <div class="row-top"><span class="name">أفضل الفرص</span><span class="score">${best.length}</span></div>
@@ -1485,6 +1514,12 @@ DASHBOARD_HTML = r"""
         </div>
         <div class="scan-row">
           <span class="muted">افتح فرصة من الرادار، احفظها، ثم حط هدف ووقف للصفقة عشان تتابعها يومياً.</span>
+        </div>
+      `;
+      box.innerHTML += `
+        <div class="scan-row">
+          <div class="row-top"><span class="name">نقاط الولاء</span><span class="score">${engagement.loyalty_points || 0}</span></div>
+          <span class="muted">المتبقي للمكافأة ${engagement.next_reward_points ?? 120} | المسابقة ${contest ? `${contest.symbol} ${fmt(contest.target_price, 4)}` : "لم تشارك اليوم"}</span>
         </div>
       `;
     }

@@ -22,7 +22,8 @@ PLAN_FEATURES = {
         "share_menu", "export_history",
         "subscription", "support_ticket", "support", "help", "terms",
     ],
-    "vip": [
+        "vip": [
+        "vip_center", "portfolio_menu", "smart_alerts", "contest_daily", "loyalty_points", "market_pulse",
         "scan_quick", "symbol_browser", "heatmap", "market:saudi", "market:us", "market:crypto",
         "market_overview", "news_menu", "daily_reports", "compare",
         "mtf_scan", "vip_signals", "screener_menu", "fib_menu", "risk_calc", "fear_greed",
@@ -35,6 +36,12 @@ PLAN_FEATURES = {
 }
 
 ALL_BUTTONS: list[tuple[str, str]] = [
+    ("💎 مركز VIP", "vip_center"),
+    ("💼 محفظتي", "portfolio_menu"),
+    ("🧠 التنبيه الذكي", "smart_alerts"),
+    ("🏁 مسابقة اليوم", "contest_daily"),
+    ("🎖 نقاطي", "loyalty_points"),
+    ("⚡ نبض السوق", "market_pulse"),
     ("📊 فحص سريع", "scan_quick"),
     ("🔎 اسأل عن سهم", "ask_stock"),
     ("🔍 تصفح الرموز", "symbol_browser"),
@@ -80,6 +87,7 @@ MAIN_MENU_BUTTONS = ALL_BUTTONS
 
 def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="💎 مركز VIP", callback_data="vip_center")
     builder.button(text="🌐 لوحة VIP", callback_data="vip_dashboard")
     builder.button(text="🤖 مساعد الذكاء", callback_data="ai_assistant")
     builder.button(text="📊 التحليل والفحص", callback_data="menu:analysis")
@@ -88,7 +96,7 @@ def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
     builder.button(text="📈 التقارير والفرص", callback_data="menu:reports")
     builder.button(text="🧰 أدوات احترافية", callback_data="menu:tools")
     builder.button(text="👤 حسابي والدعم", callback_data="menu:account")
-    builder.adjust(2, 2, 2, 2)
+    builder.adjust(1, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -111,12 +119,17 @@ def section_menu(section: str, plan: str = "vip", private_signals: bool = False)
             ("🏢 أداء القطاعات", "sector_performance"),
         ],
         "watch": [
+            ("💼 محفظتي", "portfolio_menu"),
+            ("🧠 التنبيه الذكي", "smart_alerts"),
             ("⭐ قائمتي", "my_watchlist"),
             ("🔔 تنبيهاتي", "my_alerts"),
             ("📌 صفقاتي وتنبيهاتي", "price_trackers"),
             ("📢 أخبار رموزي", "my_news_alerts"),
         ],
         "reports": [
+            ("🏁 مسابقة اليوم", "contest_daily"),
+            ("🎖 نقاطي", "loyalty_points"),
+            ("⚡ نبض السوق", "market_pulse"),
             ("🚀 رادار الفرص", "opportunity_radar"),
             ("🔥 فرصة اليوم", "opportunity_day"),
             ("📅 التقارير اليومية", "daily_reports"),
@@ -306,6 +319,9 @@ def alert_types(symbol: str, market: str) -> InlineKeyboardMarkup:
         ("📊 RSI فوق", "rsi_above"),
         ("📊 RSI تحت", "rsi_below"),
         ("📈 حجم التداول", "volume_spike"),
+        ("🟢 قريب من الدعم", "near_support"),
+        ("🔴 قريب من المقاومة", "near_resistance"),
+        ("⚡ تغير يومي %", "price_change_percent"),
     ]
     for text, atype in items:
         builder.button(text=text, callback_data=f"alert_set:{symbol}:{market}:{atype}")

@@ -279,6 +279,47 @@ async def cmd_ai(message: Message):
     await _open_ai_assistant(message, message.from_user.id)
 
 
+@router.message(Command("vip"))
+async def cmd_vip(message: Message):
+    user = await _get_user(message.from_user.id)
+    if not user:
+        await message.answer("اضغط /start أولاً لتفعيل حسابك.")
+        return
+    if message.from_user.id not in settings.admin_ids and user.plan not in ("vip", "lifetime"):
+        await message.answer("مركز VIP متاح لمشتركي VIP فقط.", reply_markup=back_button("subscription"))
+        return
+    from services.vip_engagement import build_vip_center_text
+    from bot.handlers.features import _vip_actions_keyboard
+
+    text = await build_vip_center_text(user)
+    await message.answer(text[:4000], reply_markup=_vip_actions_keyboard())
+
+
+@router.message(Command("pulse"))
+async def cmd_pulse(message: Message):
+    from services.vip_engagement import build_market_pulse_text
+
+    await message.answer("جاري قراءة نبض السوق...")
+    text = await build_market_pulse_text()
+    await message.answer(text[:4000], reply_markup=back_button("menu:reports"))
+
+
+@router.message(Command("contest"))
+async def cmd_contest(message: Message):
+    user = await _get_user(message.from_user.id)
+    if not user:
+        await message.answer("اضغط /start أولاً لتفعيل حسابك.")
+        return
+    from services.vip_engagement import get_contest_summary
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🏁 تسجيل توقع", callback_data="contest_enter")
+    builder.button(text="↩️ رجوع", callback_data="menu:reports")
+    builder.adjust(1)
+    text = await get_contest_summary(user.id)
+    await message.answer(text[:4000], reply_markup=builder.as_markup())
+
+
 @router.callback_query(F.data == "ai_assistant")
 async def cb_ai_assistant(callback: CallbackQuery):
     await callback.answer()
@@ -1084,6 +1125,18 @@ async def handle_text_input(message: Message):
             return
         elif context_type == "rs_compare":
             await handle_rs_compare_input(message)
+            return
+        elif context_type == "portfolio_add":
+            from bot.handlers.features import handle_portfolio_add_input
+            await handle_portfolio_add_input(message)
+            return
+        elif context_type == "contest_prediction":
+            from bot.handlers.features import handle_contest_prediction_input
+            await handle_contest_prediction_input(message)
+            return
+        elif context_type == "smart_alert":
+            from bot.handlers.features import handle_smart_alert_input
+            await handle_smart_alert_input(message)
             return
 
     query = message.text.strip()
