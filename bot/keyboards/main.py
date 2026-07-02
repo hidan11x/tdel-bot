@@ -112,6 +112,8 @@ def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
             ("📢 أخبار رموزي", "my_news_alerts"),
         ],
         "reports": [
+            ("🚀 رادار الفرص", "opportunity_radar"),
+            ("🔥 فرصة اليوم", "opportunity_day"),
             ("📅 التقارير اليومية", "daily_reports"),
             ("🏆 أقوى القراءات", "top_readings"),
             ("📰 أخبار السوق", "news_menu"),

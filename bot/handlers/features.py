@@ -17,6 +17,7 @@ from services.social import (
 )
 from services.symbols_service import get_symbol_info
 from bot.keyboards.main import back_button
+from config import settings
 
 from . import _user_context
 
@@ -29,6 +30,13 @@ async def _get_user(telegram_id: int):
             select(User).where(User.telegram_id == telegram_id)
         )
         return result.scalar_one_or_none()
+
+
+async def _is_vip_user(telegram_id: int) -> bool:
+    if telegram_id in settings.admin_ids:
+        return True
+    user = await _get_user(telegram_id)
+    return bool(user and user.plan in ("vip", "lifetime"))
 
 
 @router.callback_query(F.data == "market_overview")
@@ -53,6 +61,68 @@ async def cb_market_overview_detail(callback: CallbackQuery):
         await callback.message.edit_text(overview[:4000], reply_markup=back_button("main_menu"))
     else:
         await callback.message.edit_text("❌ تعذر تحضير النظرة الشاملة.", reply_markup=back_button("main_menu"))
+
+
+@router.callback_query(F.data == "opportunity_radar")
+async def cb_opportunity_radar(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("🚀 جاري تشغيل رادار الفرص...")
+
+    try:
+        from services.opportunities import (
+            build_opportunity_keyboard,
+            flatten_radar,
+            format_radar,
+            get_radar_opportunities,
+        )
+
+        vip = await _is_vip_user(callback.from_user.id)
+        radar = await get_radar_opportunities(vip=vip)
+        items = flatten_radar(radar)
+        text = format_radar(radar, vip=vip)
+        await callback.message.edit_text(
+            text[:4000],
+            reply_markup=build_opportunity_keyboard(items, back_to="menu:reports"),
+        )
+    except Exception:
+        logger.exception("opportunity_radar failed")
+        await callback.message.edit_text(
+            "❌ تعذر تشغيل رادار الفرص حالياً.",
+            reply_markup=back_button("menu:reports"),
+        )
+
+
+@router.callback_query(F.data == "opportunity_day")
+async def cb_opportunity_day(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("🔥 جاري اختيار فرصة اليوم...")
+
+    try:
+        from services.opportunities import (
+            build_opportunity_keyboard,
+            format_opportunity_of_day,
+            get_opportunity_of_day,
+        )
+
+        result = await get_opportunity_of_day()
+        if not result:
+            await callback.message.edit_text(
+                "❌ لا توجد فرصة واضحة حالياً.",
+                reply_markup=back_button("menu:reports"),
+            )
+            return
+
+        text = format_opportunity_of_day(result)
+        await callback.message.edit_text(
+            text[:4000],
+            reply_markup=build_opportunity_keyboard([result], back_to="menu:reports"),
+        )
+    except Exception:
+        logger.exception("opportunity_day failed")
+        await callback.message.edit_text(
+            "❌ تعذر اختيار فرصة اليوم حالياً.",
+            reply_markup=back_button("menu:reports"),
+        )
 
 
 @router.callback_query(F.data == "price_trackers")
