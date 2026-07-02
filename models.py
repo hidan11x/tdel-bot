@@ -97,6 +97,21 @@ class ActivationCode(Base):
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
+class ActivationCodeRedemption(Base):
+    __tablename__ = "activation_code_redemptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    activation_code_id: Mapped[int] = mapped_column(Integer, ForeignKey("activation_codes.id"))
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    plan: Mapped[str] = mapped_column(String)
+    subscription_start: Mapped[datetime] = mapped_column(_DateTime())
+    subscription_end: Mapped[Optional[datetime]] = mapped_column(_DateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+    activation_code: Mapped["ActivationCode"] = relationship("ActivationCode", backref="redemptions")
+    user: Mapped["User"] = relationship("User", backref="activation_redemptions")
+
+
 class Payment(Base):
     __tablename__ = "payments"
 

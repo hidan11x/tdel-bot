@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, and_, update
 
 from database import get_session
-from models import User, Plan, ActivationCode, DailyUsage, Alert, Watchlist
+from models import User, Plan, ActivationCode, ActivationCodeRedemption, DailyUsage, Alert, Watchlist
 from config import settings
 
 
@@ -162,6 +162,16 @@ async def activate_code(code: str, user_id: int) -> str:
             user.subscription_end = now + timedelta(hours=1)
         else:
             user.subscription_end = now + timedelta(days=ac.duration_days)
+
+        session.add(
+            ActivationCodeRedemption(
+                activation_code_id=ac.id,
+                user_id=user.id,
+                plan=ac.plan,
+                subscription_start=user.subscription_start or now,
+                subscription_end=user.subscription_end,
+            )
+        )
 
         await session.commit()
         return f"تم تفعيل الباقة {ac.plan} بنجاح!"

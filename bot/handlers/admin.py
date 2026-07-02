@@ -11,7 +11,19 @@ from aiogram.fsm.state import State, StatesGroup
 
 from config import settings
 from database import get_session
-from models import User, ActivationCode, Coupon, AdminLog, Payment, ErrorLog, MarketSettings, SystemSettings, ScanLog, Symbol
+from models import (
+    User,
+    ActivationCode,
+    ActivationCodeRedemption,
+    Coupon,
+    AdminLog,
+    Payment,
+    ErrorLog,
+    MarketSettings,
+    SystemSettings,
+    ScanLog,
+    Symbol,
+)
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.keyboards import admin_menu, admin_users_actions, back_button, main_menu
@@ -116,6 +128,35 @@ def _activation_plan_label(plan: str) -> str:
     }.get(plan, plan)
 
 
+def _format_dt(value: datetime | None) -> str:
+    if not value:
+        return "-"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(settings.timezone).strftime("%Y-%m-%d %H:%M")
+
+
+def _remaining_label(value: datetime | None) -> tuple[str, str]:
+    if not value:
+        return "غير محدد", "نشط"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if value <= now:
+        return "منتهي", "منتهي"
+    total_minutes = int((value - now).total_seconds() // 60)
+    days, rem = divmod(total_minutes, 1440)
+    hours, minutes = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} يوم")
+    if hours:
+        parts.append(f"{hours} ساعة")
+    if not days and minutes:
+        parts.append(f"{minutes} دقيقة")
+    return " و ".join(parts) or "أقل من دقيقة", "نشط"
+
+
 @router.message(Command("admin"))
 async def cmd_admin(msg: Message, state: FSMContext = None):
     if not is_admin(msg.from_user.id):
@@ -207,6 +248,8 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await state.set_state(AdminStates.add_code_duration)
         await cq.message.edit_text(f"أدخل مدة الكود بالأيام للخطة {plan}:", reply_markup=back_button("admin_codes"))
         await cq.answer()
+    elif data.startswith("admin_code_details:"):
+        await _admin_code_details(cq, int(data.split(":")[1]))
     elif data.startswith("admin_code_disable:"):
         await _admin_code_disable(cq, int(data.split(":")[1]))
     elif data == "admin_indicators":
@@ -443,9 +486,10 @@ async def _admin_codes_menu(cq: CallbackQuery):
     builder.button(text="➕ إنشاء كود", callback_data="admin_codes_create")
     for c in codes[:8]:
         label = "تعطيل" if c.is_active else "تفعيل"
+        builder.button(text=f"تفاصيل {c.code}", callback_data=f"admin_code_details:{c.id}")
         builder.button(text=f"{label} {c.code}", callback_data=f"admin_code_disable:{c.id}")
     builder.button(text="↩️ رجوع", callback_data="admin_panel")
-    builder.adjust(1)
+    builder.adjust(1, 2)
     await cq.message.edit_text("\n".join(lines)[:3900], reply_markup=builder.as_markup())
     await cq.answer()
 
@@ -459,6 +503,63 @@ async def _admin_code_disable(cq: CallbackQuery, code_id: int):
                 c.is_active = not c.is_active
     await cq.answer("✅ تم التحديث", show_alert=True)
     await _admin_codes_menu(cq)
+
+
+async def _admin_code_details(cq: CallbackQuery, code_id: int):
+    async with get_session() as session:
+        code_result = await session.execute(select(ActivationCode).where(ActivationCode.id == code_id))
+        code = code_result.scalar_one_or_none()
+        if not code:
+            await cq.answer("الكود غير موجود", show_alert=True)
+            return
+
+        result = await session.execute(
+            select(ActivationCodeRedemption, User)
+            .join(User, User.id == ActivationCodeRedemption.user_id)
+            .where(ActivationCodeRedemption.activation_code_id == code_id)
+            .order_by(ActivationCodeRedemption.created_at.desc())
+            .limit(20)
+        )
+        rows = result.all()
+
+    icon, status = _activation_code_status(code)
+    lines = [
+        f"🔑 <b>تفاصيل الكود</b>",
+        f"{icon} <code>{code.code}</code>",
+        f"الخطة: {_activation_plan_label(code.plan)} | المدة: {_activation_duration_label(code)}",
+        f"الاستخدام: {code.uses}/{code.max_uses} | الحالة: {status}",
+        "",
+        "👥 المستخدمون:",
+    ]
+
+    if not rows:
+        lines.append("لا توجد استخدامات مسجلة لهذا الكود حتى الآن.")
+        if code.uses:
+            lines.append("ملاحظة: قد يكون هذا الاستخدام قبل تحديث سجل التفاصيل.")
+    else:
+        for index, (redemption, user) in enumerate(rows, start=1):
+            remaining, sub_status = _remaining_label(redemption.subscription_end)
+            username = f"@{user.username}" if user.username else "بدون يوزر"
+            name = user.first_name or str(user.telegram_id)
+            lines.extend(
+                [
+                    f"{index}. {name} | {username}",
+                    f"   ID: <code>{user.telegram_id}</code>",
+                    f"   التفعيل: {_format_dt(redemption.created_at)}",
+                    f"   الانتهاء: {_format_dt(redemption.subscription_end)}",
+                    f"   المتبقي: {remaining} | {sub_status}",
+                    "",
+                ]
+            )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 تحديث", callback_data=f"admin_code_details:{code_id}")
+    builder.button(text="↩️ رجوع للأكواد", callback_data="admin_codes")
+    builder.adjust(1)
+    await cq.message.edit_text("\n".join(lines)[:3900], reply_markup=builder.as_markup())
+    await cq.answer()
 
 
 async def _admin_stats(cq: CallbackQuery):
