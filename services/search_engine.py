@@ -257,13 +257,13 @@ async def smart_search(query: str, limit: int = 8) -> List[Dict[str, Any]]:
                         "score": 100,
                     })
 
-    # Step 2: If few/zero results, do fuzzy search on all symbols
-    if len(results) < 3:
-        fuzzy_results = await _fuzzy_search(query, session)
-        for fr in fuzzy_results:
-            if fr["id"] not in seen_ids:
-                seen_ids.add(fr["id"])
-                results.append(fr)
+        # Step 2: If few/zero results, do fuzzy search on all symbols
+        if len(results) < 3:
+            fuzzy_results = await _fuzzy_search(query, session)
+            for fr in fuzzy_results:
+                if fr["id"] not in seen_ids:
+                    seen_ids.add(fr["id"])
+                    results.append(fr)
 
     # Step 3: Score and rank
     for r in results:
@@ -375,6 +375,43 @@ CRYPTO_SYMBOL_MAP = {
     "ltc": "LTCUSDT", "litecoin": "LTCUSDT", "ليتكوين": "LTCUSDT",
 }
 
+COMMON_SYMBOL_ALIASES = {
+    "الراجحي": ("1120.SR", "SAUDI", "مصرف الراجحي"),
+    "مصرف الراجحي": ("1120.SR", "SAUDI", "مصرف الراجحي"),
+    "بنك الراجحي": ("1120.SR", "SAUDI", "مصرف الراجحي"),
+    "الاهلي": ("1180.SR", "SAUDI", "البنك الأهلي السعودي"),
+    "الأهلي": ("1180.SR", "SAUDI", "البنك الأهلي السعودي"),
+    "ارامكو": ("2222.SR", "SAUDI", "أرامكو السعودية"),
+    "أرامكو": ("2222.SR", "SAUDI", "أرامكو السعودية"),
+    "سابك": ("2010.SR", "SAUDI", "سابك"),
+    "stc": ("7010.SR", "SAUDI", "الاتصالات السعودية"),
+    "الاتصالات": ("7010.SR", "SAUDI", "الاتصالات السعودية"),
+    "ابل": ("AAPL", "US", "Apple"),
+    "آبل": ("AAPL", "US", "Apple"),
+    "apple": ("AAPL", "US", "Apple"),
+    "تسلا": ("TSLA", "US", "Tesla"),
+    "tesla": ("TSLA", "US", "Tesla"),
+    "نفيديا": ("NVDA", "US", "Nvidia"),
+    "nvidia": ("NVDA", "US", "Nvidia"),
+    "مايكروسوفت": ("MSFT", "US", "Microsoft"),
+    "microsoft": ("MSFT", "US", "Microsoft"),
+    "امازون": ("AMZN", "US", "Amazon"),
+    "amazon": ("AMZN", "US", "Amazon"),
+    "قوقل": ("GOOGL", "US", "Alphabet"),
+    "جوجل": ("GOOGL", "US", "Alphabet"),
+    "google": ("GOOGL", "US", "Alphabet"),
+    "ميتا": ("META", "US", "Meta"),
+    "meta": ("META", "US", "Meta"),
+    "بيتكوين": ("BTCUSDT", "CRYPTO", "Bitcoin"),
+    "بتكوين": ("BTCUSDT", "CRYPTO", "Bitcoin"),
+    "bitcoin": ("BTCUSDT", "CRYPTO", "Bitcoin"),
+    "ايثريوم": ("ETHUSDT", "CRYPTO", "Ethereum"),
+    "اثريوم": ("ETHUSDT", "CRYPTO", "Ethereum"),
+    "ethereum": ("ETHUSDT", "CRYPTO", "Ethereum"),
+    "سولانا": ("SOLUSDT", "CRYPTO", "Solana"),
+    "solana": ("SOLUSDT", "CRYPTO", "Solana"),
+}
+
 
 async def auto_detect_symbol(query: str) -> Optional[Dict[str, Any]]:
     query = query.strip()
@@ -382,6 +419,18 @@ async def auto_detect_symbol(query: str) -> Optional[Dict[str, Any]]:
         return None
 
     query_lower = query.lower()
+    query_norm = _normalize(query)
+
+    alias = COMMON_SYMBOL_ALIASES.get(query_lower) or COMMON_SYMBOL_ALIASES.get(query_norm)
+    if alias:
+        symbol, market, name = alias
+        return {
+            "symbol": symbol,
+            "market": market,
+            "name_ar": name,
+            "name_en": name,
+            "source": "common_alias",
+        }
 
     from services.symbols_service import find_symbol_by_name_or_alias
     db_results = await find_symbol_by_name_or_alias(query, limit=5)

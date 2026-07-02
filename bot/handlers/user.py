@@ -183,6 +183,22 @@ async def cmd_version(message: Message):
     await message.answer(text, reply_markup=back_button("main_menu"))
 
 
+@router.message(Command("whoami"))
+async def cmd_whoami(message: Message):
+    user = await _get_user(message.from_user.id)
+    is_admin = message.from_user.id in settings.admin_ids
+    plan = user.plan if user else "غير مسجل"
+    text = (
+        "👤 بيانات حسابك\n\n"
+        f"Telegram ID: `{message.from_user.id}`\n"
+        f"Username: @{message.from_user.username or 'بدون'}\n"
+        f"الخطة: {plan}\n"
+        f"أدمن: {'نعم ✅' if is_admin else 'لا ❌'}\n\n"
+        "إذا أنت صاحب البوت وظهر أدمن: لا، أضف رقم Telegram ID في متغير Railway باسم ADMIN_IDS."
+    )
+    await message.answer(text, reply_markup=back_button("main_menu"))
+
+
 @router.callback_query(F.data == "daily_reports")
 async def cb_daily_reports(callback: CallbackQuery):
     await callback.answer()

@@ -106,13 +106,14 @@ class ReportScheduler:
             id="daily_summary",
             replace_existing=True,
         )
-        self.scheduler.add_job(
-            self.send_news_notifications_job,
-            "interval",
-            hours=1,
-            id="news_notifications",
-            replace_existing=True,
-        )
+        if settings.news_notifications_enabled:
+            self.scheduler.add_job(
+                self.send_news_notifications_job,
+                "interval",
+                hours=settings.news_interval_hours,
+                id="news_notifications",
+                replace_existing=True,
+            )
         self.scheduler.start()
         logger.info("Scheduler started")
 

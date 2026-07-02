@@ -77,26 +77,18 @@ MAIN_MENU_BUTTONS = ALL_BUTTONS
 
 
 def main_menu(plan: str = "vip") -> InlineKeyboardMarkup:
-    allowed = PLAN_FEATURES.get(plan, PLAN_FEATURES["free"])
-
     builder = InlineKeyboardBuilder()
-    if "scan_quick" in allowed:
-        builder.button(text="📊 التحليل والفحص", callback_data="menu:analysis")
-    if any(item in allowed for item in ("market:saudi", "market:us", "market:crypto", "market_overview", "heatmap")):
-        builder.button(text="🌍 الأسواق", callback_data="menu:markets")
-    if any(item in allowed for item in ("my_watchlist", "my_alerts", "price_trackers", "my_news_alerts")):
-        builder.button(text="🔔 المتابعة والتنبيهات", callback_data="menu:watch")
-    if any(item in allowed for item in ("daily_reports", "top_readings", "news_menu", "my_stats")):
-        builder.button(text="📈 التقارير والفرص", callback_data="menu:reports")
-    if any(item in allowed for item in ("compare", "screener_menu", "fib_menu", "risk_calc", "fear_greed", "rs_compare")):
-        builder.button(text="🧰 أدوات احترافية", callback_data="menu:tools")
+    builder.button(text="📊 التحليل والفحص", callback_data="menu:analysis")
+    builder.button(text="🌍 الأسواق", callback_data="menu:markets")
+    builder.button(text="🔔 المتابعة والتنبيهات", callback_data="menu:watch")
+    builder.button(text="📈 التقارير والفرص", callback_data="menu:reports")
+    builder.button(text="🧰 أدوات احترافية", callback_data="menu:tools")
     builder.button(text="👤 حسابي والدعم", callback_data="menu:account")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
 def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
-    allowed = PLAN_FEATURES.get(plan, PLAN_FEATURES["free"])
     groups = {
         "analysis": [
             ("📊 فحص سريع", "scan_quick"),
@@ -146,9 +138,7 @@ def section_menu(section: str, plan: str = "vip") -> InlineKeyboardMarkup:
 
     builder = InlineKeyboardBuilder()
     for text, cb in groups.get(section, []):
-        cb_key = cb.split(":")[0] + ":*" if ":" in cb else cb
-        if cb in allowed or cb_key in allowed:
-            builder.button(text=text, callback_data=cb)
+        builder.button(text=text, callback_data=cb)
     builder.button(text="↩️ رجوع", callback_data="main_menu")
     builder.adjust(2)
     return builder.as_markup()

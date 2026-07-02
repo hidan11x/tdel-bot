@@ -12,6 +12,7 @@ BOT_COMMANDS = [
     BotCommand(command="daily", description="📅 التقرير اليومي"),
     BotCommand(command="scan", description="📊 فحص سريع"),
     BotCommand(command="support", description="🛠 الدعم"),
+    BotCommand(command="whoami", description="👤 رقم حسابي وحالة الأدمن"),
 ]
 
 

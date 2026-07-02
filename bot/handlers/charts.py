@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
 
 from services.chart_generator import generate_chart
+from services.search_engine import auto_detect_symbol
 from utils.validators import is_valid_symbol
 from bot.keyboards.main import (
     chart_market_menu, timeframe_menu, back_button, symbol_actions,
@@ -117,8 +118,15 @@ async def handle_chart_symbol_input(message: Message):
     symbol = message.text.strip().upper()
 
     if not is_valid_symbol(symbol):
-        await message.answer("❌ الرمز غير صالح. جرّب مثل: 2222.SR أو AAPL أو BTCUSDT")
-        return
+        detected = await auto_detect_symbol(message.text.strip())
+        if detected:
+            symbol = detected["symbol"]
+            market = detected["market"]
+            detected_name = detected.get("name_ar") or detected.get("name_en") or symbol
+            await message.answer(f"🔎 تم التعرف على: {detected_name} ({symbol})")
+        else:
+            await message.answer("❌ ما قدرت أتعرف على الاسم أو الرمز. جرّب: الراجحي، ابل، بيتكوين، 2222.SR، AAPL")
+            return
 
     market_key = {"SAUDI": "saudi", "US": "us", "CRYPTO": "crypto"}.get(market, "us")
     kb = timeframe_menu(market_key, f"chart_gen:{symbol}:{market}")

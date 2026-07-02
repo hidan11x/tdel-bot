@@ -39,6 +39,8 @@ class Settings:
 
     yfinance_enabled: bool = field(default_factory=lambda: _env("YFINANCE_ENABLED", "true").lower() == "true")
     binance_enabled: bool = field(default_factory=lambda: _env("BINANCE_ENABLED", "true").lower() == "true")
+    news_notifications_enabled: bool = field(default_factory=lambda: _env("NEWS_NOTIFICATIONS_ENABLED", "false").lower() == "true")
+    news_interval_hours: int = field(default_factory=lambda: max(1, _int("NEWS_INTERVAL_HOURS", 12)))
 
     saudi_open: str = field(default_factory=lambda: _env("SAUDI_MARKET_OPEN", "10:00"))
     saudi_close: str = field(default_factory=lambda: _env("SAUDI_MARKET_CLOSE", "15:00"))
@@ -46,9 +48,9 @@ class Settings:
     us_close: str = field(default_factory=lambda: _env("US_MARKET_CLOSE", "22:00"))
     market_timezone: str = field(default_factory=lambda: _env("MARKET_TIMEZONE", "Asia/Riyadh"))
 
-    free_scans_daily: int = field(default_factory=lambda: _int("FREE_SCANS_DAILY", 0))
-    free_alerts: int = field(default_factory=lambda: _int("FREE_ALERTS", 0))
-    free_watchlist: int = field(default_factory=lambda: _int("FREE_WATCHLIST", 0))
+    free_scans_daily: int = field(default_factory=lambda: _int("FREE_SCANS_DAILY", 5))
+    free_alerts: int = field(default_factory=lambda: _int("FREE_ALERTS", 3))
+    free_watchlist: int = field(default_factory=lambda: _int("FREE_WATCHLIST", 5))
     basic_scans_daily: int = field(default_factory=lambda: _int("BASIC_SCANS_DAILY", 30))
     basic_alerts: int = field(default_factory=lambda: _int("BASIC_ALERTS", 15))
     basic_watchlist: int = field(default_factory=lambda: _int("BASIC_WATCHLIST", 20))
