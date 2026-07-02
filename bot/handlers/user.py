@@ -161,6 +161,7 @@ async def cmd_help(message: Message):
         "/profile - ملفي الشخصي\n"
         "/plans - خطط الاشتراك\n"
         "/subscribe - الاشتراك\n"
+        "/ask - اسأل عن سهم أو فلتر سوق\n"
         "/ai - مساعد الذكاء لمشتركي VIP\n\n"
         "يمكنك استخدام الأزرار أدناه للتنقل بين القوائم."
     )
@@ -545,10 +546,28 @@ async def cb_ask_stock(callback: CallbackQuery):
         "• وش وضع PLTR؟\n"
         "• هل NVDA مرتفع اليوم؟\n"
         "• الأمريكي تحت 150\n"
+        "• الأمريكي RSI تحت 30\n"
+        "• السعودي مرتفع اليوم\n"
+        "• الكريبتو حجم تداول عالي\n"
         "• الكريبتو تحت 1\n\n"
         "البوت يبحث في البيانات المتاحة ويرجع لك قراءة مختصرة."
     )
     await callback.message.edit_text(text, reply_markup=back_button("menu:analysis"))
+
+
+@router.message(Command("ask"))
+async def cmd_ask_stock(message: Message, command=None):
+    query = ""
+    if command and command.args:
+        query = command.args.strip()
+    if not query:
+        _user_context[message.from_user.id] = {"context": "ask_stock"}
+        await message.answer(
+            "🔎 اكتب سؤالك عن السهم أو السوق.\nمثال: PLTR\nمثال: السعودي تحت 50\nمثال: الأمريكي RSI تحت 30",
+            reply_markup=back_button("menu:analysis"),
+        )
+        return
+    await _answer_market_question(message, query)
 
 
 @router.callback_query(F.data.startswith("ma_symbol:"))
@@ -1211,11 +1230,15 @@ async def handle_ask_stock_input(message: Message):
         await message.answer("اكتب اسم السهم أو سؤالك.")
         return
 
+    _user_context.pop(telegram_id, None)
+    await _answer_market_question(message, query)
+
+
+async def _answer_market_question(message: Message, query: str):
     await message.answer("🔎 جاري البحث والتحقق من البيانات...")
     from services.market_assistant import analyze_question
 
     result = await analyze_question(query)
-    _user_context.pop(telegram_id, None)
     await message.answer(result.text[:3900], reply_markup=_ask_stock_keyboard(result))
 
 

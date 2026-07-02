@@ -64,6 +64,8 @@ def _extract_screen_filter(text: str) -> ScreenFilter | None:
     lowered = text.lower()
 
     rsi_match = re.search(r"rsi\s*(تحت|اقل|أقل|below|under|فوق|اكثر|أكثر|above|over)\s*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if not rsi_match:
+        rsi_match = re.search(r"(تحت|اقل|أقل|below|under|فوق|اكثر|أكثر|above|over)\s*(\d+(?:\.\d+)?)\s*rsi", text, re.IGNORECASE)
     if rsi_match:
         word = rsi_match.group(1).lower()
         direction = "below" if word in {"تحت", "اقل", "أقل", "below", "under"} else "above"
@@ -106,6 +108,44 @@ def _direct_candidate(token: str, market_hint: str | None) -> dict[str, Any] | N
     return None
 
 
+async def _ensure_symbol(detected: dict[str, Any]) -> None:
+    symbol = (detected.get("symbol") or "").upper()
+    market = (detected.get("market") or "").upper()
+    if not symbol or not market:
+        return
+    async with get_session() as session:
+        existing = (
+            await session.execute(select(Symbol).where(Symbol.symbol == symbol, Symbol.market == market))
+        ).scalar_one_or_none()
+        if existing:
+            return
+        currency = "SAR" if market == "SAUDI" else "USDT" if market == "CRYPTO" else "USD"
+        asset_type = "crypto" if market == "CRYPTO" else "stock"
+        yahoo_symbol = symbol
+        if market == "SAUDI" and not yahoo_symbol.endswith(".SR"):
+            yahoo_symbol = f"{symbol}.SR"
+        elif market == "CRYPTO":
+            yahoo_symbol = f"{symbol[:-4]}-USD" if symbol.endswith("USDT") else f"{symbol}-USD"
+        session.add(
+            Symbol(
+                market=market,
+                symbol=symbol,
+                yahoo_symbol=yahoo_symbol,
+                name_ar=detected.get("name_ar") or symbol,
+                name_en=detected.get("name_en") or symbol,
+                sector=detected.get("sector") or ("Crypto" if market == "CRYPTO" else "Auto"),
+                category=detected.get("sector") or ("Crypto" if market == "CRYPTO" else "Auto"),
+                exchange="Binance" if market == "CRYPTO" else market,
+                currency=currency,
+                asset_type=asset_type,
+                is_active=True,
+                is_popular=False,
+                sort_order=9999,
+            )
+        )
+        await session.commit()
+
+
 async def _resolve_symbol(text: str) -> dict[str, Any] | None:
     token = _query_token(text)
     for candidate_text in (token, text):
@@ -118,6 +158,7 @@ async def _resolve_symbol(text: str) -> dict[str, Any] | None:
     price = await asyncio.to_thread(get_current_price_sync, candidate["symbol"], candidate["market"])
     if price is None:
         return None
+    await _ensure_symbol(candidate)
     return candidate
 
 
@@ -198,6 +239,8 @@ async def summarize_symbol(detected: dict[str, Any]) -> MarketAssistantResult:
 
     if price is None:
         return MarketAssistantResult(kind="not_found", text=f"تعذر جلب بيانات {symbol} حالياً.")
+
+    await _ensure_symbol(detected)
 
     direction = "مرتفع" if change_pct > 0 else "نازل" if change_pct < 0 else "بدون تغير واضح"
     mood = "إيجابية" if change_pct > 1 and trend == "صاعد" else "ضعيفة" if change_pct < -1 and trend == "هابط" else "محايدة"
