@@ -6,8 +6,15 @@ import os
 from config import settings
 
 
+def _clean(value: str) -> str:
+    value = (value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
 def _secret() -> bytes:
-    raw = os.getenv("DASHBOARD_SECRET") or settings.bot_token or "telegram-trading-bot"
+    raw = _clean(os.getenv("DASHBOARD_SECRET", "")) or settings.bot_token or "telegram-trading-bot"
     return raw.encode("utf-8")
 
 
@@ -24,11 +31,11 @@ def verify_dashboard_token(telegram_id: int, token: str) -> bool:
 
 
 def dashboard_base_url() -> str:
-    configured = os.getenv("DASHBOARD_BASE_URL", "").strip().rstrip("/")
+    configured = _clean(os.getenv("DASHBOARD_BASE_URL", "")).rstrip("/")
     if configured:
         return configured
 
-    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    railway_domain = _clean(os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
     if railway_domain:
         return f"https://{railway_domain}".rstrip("/")
 

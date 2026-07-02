@@ -20,6 +20,13 @@ RADAR_TTL_SECONDS = 90
 _radar_cache: dict[str, Any] = {"expires": 0.0, "items": []}
 
 
+def _env_value(key: str, default: str = "") -> str:
+    value = os.getenv(key, default).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
 def _json(data: dict[str, Any], status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers={"Cache-Control": "no-store"})
 
@@ -234,7 +241,7 @@ async def start_dashboard_server() -> web.AppRunner:
     app = create_dashboard_app()
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT", "8080"))
+    port = int(_env_value("DASHBOARD_PORT") or _env_value("PORT", "8080"))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info("VIP dashboard started on port {}", port)

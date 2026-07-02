@@ -9,7 +9,10 @@ load_dotenv()
 
 
 def _env(key: str, default: str = "") -> str:
-    return os.getenv(key, default).strip()
+    value = os.getenv(key, default).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
 
 
 def _int(key: str, default: int = 0) -> int:
