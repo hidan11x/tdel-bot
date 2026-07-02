@@ -34,6 +34,11 @@ def _list(key: str, default: str = "") -> List[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
 
 
+def _str_list(key: str, default: str = "") -> List[str]:
+    raw = _env(key, default)
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
 @dataclass
 class Settings:
     bot_token: str = field(default_factory=lambda: _env("BOT_TOKEN") or _env("TELEGRAM_BOT_TOKEN"))
@@ -42,6 +47,12 @@ class Settings:
 
     yfinance_enabled: bool = field(default_factory=lambda: _env("YFINANCE_ENABLED", "true").lower() == "true")
     binance_enabled: bool = field(default_factory=lambda: _env("BINANCE_ENABLED", "true").lower() == "true")
+    binance_base_urls: List[str] = field(
+        default_factory=lambda: _str_list(
+            "BINANCE_BASE_URLS",
+            "https://api.binance.com,https://api1.binance.com,https://api2.binance.com,https://api3.binance.com,https://api4.binance.com",
+        )
+    )
     news_notifications_enabled: bool = field(default_factory=lambda: _env("NEWS_NOTIFICATIONS_ENABLED", "false").lower() == "true")
     news_interval_hours: int = field(default_factory=lambda: max(1, _int("NEWS_INTERVAL_HOURS", 12)))
 

@@ -1,4 +1,3 @@
-import time
 from typing import List, Optional
 from functools import wraps
 
@@ -11,8 +10,10 @@ from services.cache import cache, market_cache_key
 
 MAP_INTERVAL = {"15min": "15m", "30min": "30m", "1h": "60m", "4h": "4h", "1d": "1d", "1wk": "1wk"}
 BINANCE_INTERVAL = {"15min": "15m", "30min": "30m", "1h": "1h", "4h": "4h", "1d": "1d", "1wk": "1w"}
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+BINANCE_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "TDawlXBot/2.0 market-data",
+}
 
 MAX_RETRIES = 3
 RETRY_DELAY = 1.5
@@ -32,6 +33,7 @@ def _retry(func):
                 last_error = e
                 if attempt < MAX_RETRIES:
                     logger.warning("Retry {}/{} for {}: {}", attempt, MAX_RETRIES, func.__name__, e)
+                    import time
                     time.sleep(RETRY_DELAY * attempt)
         logger.error("All {} retries failed for {}: {}", MAX_RETRIES, func.__name__, last_error)
         raise last_error
@@ -46,8 +48,7 @@ class YahooFinanceProvider:
             if not s.endswith(".SR"):
                 s = f"{s}.SR"
         elif market.upper() == "CRYPTO":
-            if not s.endswith("USDT"):
-                s = f"{s}USDT"
+            s = _to_yahoo_crypto_symbol(s)
         return s
 
     @staticmethod
@@ -114,14 +115,43 @@ class BinanceProvider:
         return s
 
     @staticmethod
-    @_retry
+    def _base_urls() -> list[str]:
+        urls = [url.rstrip("/") for url in settings.binance_base_urls if url.strip()]
+        return urls or ["https://api.binance.com"]
+
+    @staticmethod
+    def _get_json(path: str, params: dict | None = None, timeout: int = 15):
+        last_error: Exception | None = None
+        for base_url in BinanceProvider._base_urls():
+            url = f"{base_url}{path}"
+            try:
+                resp = requests.get(url, params=params, headers=BINANCE_HEADERS, timeout=timeout)
+                if resp.status_code in (418, 429):
+                    retry_after = resp.headers.get("Retry-After")
+                    logger.warning(
+                        "Binance rate limited status={} base={} retry_after={}",
+                        resp.status_code,
+                        base_url,
+                        retry_after or "n/a",
+                    )
+                    last_error = requests.HTTPError(f"{resp.status_code} from {base_url}")
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Binance endpoint failed base={} path={}: {}", base_url, path, exc)
+                continue
+        if last_error:
+            raise last_error
+        raise RuntimeError("No Binance endpoints configured")
+
+    @staticmethod
     def get_historical(symbol: str, interval: str, limit: int = 200) -> Optional[List[dict]]:
         sym = BinanceProvider._normalize_symbol(symbol)
         mapped = BINANCE_INTERVAL.get(interval, interval)
         params = {"symbol": sym, "interval": mapped, "limit": limit}
-        resp = requests.get(BINANCE_KLINES_URL, params=params, timeout=15)
-        resp.raise_for_status()
-        klines = resp.json()
+        klines = BinanceProvider._get_json("/api/v3/klines", params=params, timeout=15)
         data = []
         for k in klines:
             data.append({
@@ -135,14 +165,16 @@ class BinanceProvider:
         return data
 
     @staticmethod
-    @_retry
     def get_current_price(symbol: str) -> Optional[float]:
         sym = BinanceProvider._normalize_symbol(symbol)
         params = {"symbol": sym}
-        resp = requests.get(BINANCE_TICKER_URL, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+        data = BinanceProvider._get_json("/api/v3/ticker/price", params=params, timeout=10)
         return float(data["price"])
+
+    @staticmethod
+    def ping() -> bool:
+        BinanceProvider._get_json("/api/v3/ping", timeout=5)
+        return True
 
 
 class DataProviderFactory:
@@ -153,6 +185,39 @@ class DataProviderFactory:
         return YahooFinanceProvider()
 
 
+def _to_yahoo_crypto_symbol(symbol: str) -> str:
+    s = symbol.strip().upper().replace("/", "-")
+    if s.endswith("-USD"):
+        return s
+    if s.endswith("USDT"):
+        return f"{s[:-4]}-USD"
+    if s.endswith("USD"):
+        return f"{s[:-3]}-USD"
+    return f"{s}-USD"
+
+
+def _crypto_historical(symbol: str, interval: str, outputsize: int) -> Optional[List[dict]]:
+    if settings.binance_enabled:
+        try:
+            return BinanceProvider.get_historical(symbol, interval, outputsize)
+        except Exception as exc:
+            logger.warning("Binance crypto historical failed, falling back to Yahoo: {}", exc)
+
+    result = YahooFinanceProvider.get_historical(symbol, interval, period="6mo", market="CRYPTO")
+    if result:
+        return result["data"][-outputsize:]
+    return None
+
+
+def _crypto_current_price(symbol: str) -> Optional[float]:
+    if settings.binance_enabled:
+        try:
+            return BinanceProvider.get_current_price(symbol)
+        except Exception as exc:
+            logger.warning("Binance crypto price failed, falling back to Yahoo: {}", exc)
+    return YahooFinanceProvider.get_current_price(symbol, "CRYPTO")
+
+
 def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 200) -> List[float]:
     cache_key = market_cache_key("closes", market, symbol, interval, outputsize)
     cached = cache.get(cache_key)
@@ -160,8 +225,8 @@ def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 
         return list(cached)
 
     provider = DataProviderFactory.get_provider(market)
-    if isinstance(provider, BinanceProvider):
-        data = provider.get_historical(symbol, interval, outputsize)
+    if market.upper() == "CRYPTO":
+        data = _crypto_historical(symbol, interval, outputsize)
     else:
         result = provider.get_historical(symbol, interval, period="6mo", market=market)
         if result:
@@ -182,8 +247,8 @@ def get_ohlcv(symbol: str, market: str, interval: str, outputsize: int = 200) ->
         return list(cached)
 
     provider = DataProviderFactory.get_provider(market)
-    if isinstance(provider, BinanceProvider):
-        data = provider.get_historical(symbol, interval, outputsize)
+    if market.upper() == "CRYPTO":
+        data = _crypto_historical(symbol, interval, outputsize)
     else:
         result = provider.get_historical(symbol, interval, period="6mo", market=market)
         if result:
@@ -203,8 +268,8 @@ def get_current_price_sync(symbol: str, market: str) -> Optional[float]:
         return float(cached)
 
     provider = DataProviderFactory.get_provider(market)
-    if isinstance(provider, BinanceProvider):
-        price = provider.get_current_price(symbol)
+    if market.upper() == "CRYPTO":
+        price = _crypto_current_price(symbol)
     else:
         price = provider.get_current_price(symbol, market)
 

@@ -4,7 +4,6 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-import requests
 from sqlalchemy import func, select
 
 from config import settings
@@ -45,13 +44,25 @@ async def _check_binance() -> str:
         return _warn("Binance معطل من الإعدادات")
 
     def ping() -> None:
-        response = requests.get("https://api.binance.com/api/v3/ping", timeout=5)
-        response.raise_for_status()
+        from services.market_data import BinanceProvider
+
+        BinanceProvider.ping()
 
     try:
         await asyncio.to_thread(ping)
         return _ok("Binance متصل")
     except Exception as exc:
+        def yahoo_crypto_fallback() -> float | None:
+            from services.market_data import YahooFinanceProvider
+
+            return YahooFinanceProvider.get_current_price("BTCUSDT", "CRYPTO")
+
+        try:
+            price = await asyncio.to_thread(yahoo_crypto_fallback)
+            if price:
+                return _warn(f"Binance محجوب مؤقتاً، بديل الكريبتو يعمل عبر Yahoo: BTC {price:,.0f}")
+        except Exception:
+            pass
         return _fail(f"Binance غير متاح: {_short(str(exc), 80)}")
 
 
