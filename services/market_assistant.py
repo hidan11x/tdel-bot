@@ -13,8 +13,6 @@ from services.search_engine import auto_detect_symbol
 
 
 MARKET_LABELS = {"SAUDI": "السعودي", "US": "الأمريكي", "CRYPTO": "الكريبتو"}
-
-
 @dataclass
 class MarketAssistantResult:
     kind: str
@@ -40,6 +38,16 @@ def _detect_market(text: str) -> str | None:
     if any(word in lowered for word in ("كريبتو", "بتكوين", "بيتكوين", "عملات", "crypto", "bitcoin", "btc")):
         return "CRYPTO"
     return None
+
+
+def _money(value: float, market: str) -> str:
+    if market == "US":
+        return f"${value:,.4f}"
+    if market == "CRYPTO":
+        return f"{value:,.4f} USDT"
+    if market == "SAUDI":
+        return f"{value:,.4f} ريال"
+    return f"{value:,.4f}"
 
 
 def _extract_price_filter(text: str) -> tuple[str, float] | None:
@@ -116,6 +124,17 @@ async def _resolve_symbol(text: str) -> dict[str, Any] | None:
 async def analyze_question(text: str) -> MarketAssistantResult:
     screen_filter = _extract_screen_filter(text)
     market = _detect_market(text)
+    if screen_filter and not market:
+        return MarketAssistantResult(
+            kind="need_market",
+            text=(
+                "حدد السوق أولاً عشان أطبق السعر بالعملة الصحيحة.\n\n"
+                "أمثلة:\n"
+                "• السعودي تحت 50\n"
+                "• الأمريكي تحت 150\n"
+                "• الكريبتو تحت 1"
+            ),
+        )
     if screen_filter and market:
         return await screen_market(market, screen_filter)
 
@@ -187,7 +206,7 @@ async def summarize_symbol(detected: dict[str, Any]) -> MarketAssistantResult:
         "",
         f"🏷 {name}",
         f"🔢 {symbol} | {MARKET_LABELS.get(market, market)}",
-        f"💰 السعر: {price:,.4f}",
+        f"💰 السعر: {_money(price, market)}",
         f"📊 التغير: {change_pct:+.2f}% | {direction}",
         f"🧭 الاتجاه: {trend}",
         f"🧪 القراءة: {mood}",
@@ -195,7 +214,7 @@ async def summarize_symbol(detected: dict[str, Any]) -> MarketAssistantResult:
     if rsi is not None:
         lines.append(f"RSI: {rsi:.1f}")
     if support is not None and resistance is not None:
-        lines.append(f"🟢 دعم: {support:,.4f} | 🔴 مقاومة: {resistance:,.4f}")
+        lines.append(f"🟢 دعم: {_money(support, market)} | 🔴 مقاومة: {_money(resistance, market)}")
     lines.append("")
     lines.append("هذا تحليل آلي تعليمي وليس توصية مالية.")
     return MarketAssistantResult(kind="symbol", text="\n".join(lines), symbol=symbol, market=market)
@@ -262,7 +281,10 @@ async def screen_market(market: str, screen_filter: ScreenFilter) -> MarketAssis
     }
     metric_name = filter_names.get(screen_filter.metric, screen_filter.metric)
     label = "تحت" if screen_filter.direction == "below" else "فوق"
-    value_label = f" {screen_filter.value:g}" if screen_filter.value is not None else ""
+    if screen_filter.metric == "price" and screen_filter.value is not None:
+        value_label = f" {_money(screen_filter.value, market)}"
+    else:
+        value_label = f" {screen_filter.value:g}" if screen_filter.value is not None else ""
     lines = [f"🔎 نتائج {MARKET_LABELS.get(market, market)} | {metric_name} {label}{value_label}", ""]
     if not items:
         lines.append("ما لقيت نتائج مناسبة حالياً من الرموز المتاحة.")
@@ -271,7 +293,7 @@ async def screen_market(market: str, screen_filter: ScreenFilter) -> MarketAssis
             rsi = f" | RSI {item['rsi']:.1f}" if item.get("rsi") is not None else ""
             vol = f" | حجم {item['volume_ratio']:.1f}x" if item.get("volume_ratio") is not None else ""
             lines.append(
-                f"{index}. {item['name']} ({item['symbol']}) - {item['price']:,.4f} | {item['change_pct']:+.2f}%{rsi}{vol}"
+                f"{index}. {item['name']} ({item['symbol']}) - {_money(item['price'], market)} | {item['change_pct']:+.2f}%{rsi}{vol}"
             )
     lines.append("")
     lines.append("اضغط على رمز من الأزرار لتحليله. النتائج من الأسعار المتاحة حالياً وقد تتأخر حسب مزود البيانات.")
