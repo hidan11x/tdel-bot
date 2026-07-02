@@ -702,6 +702,28 @@ async def dashboard_saved_opportunity_action(request: web.Request) -> web.Respon
     return _json({"ok": True, "message": "تم حفظ الفرصة", "item": _saved_opportunity_payload(item)})
 
 
+async def dashboard_ai_action(request: web.Request) -> web.Response:
+    user = await _authorized_user(request)
+    if isinstance(user, web.Response):
+        return user
+
+    data = await _request_json(request)
+    prompt = str(data.get("prompt") or "").strip()
+    if len(prompt) < 2:
+        return _json({"ok": False, "message": "اكتب سؤالك أولاً"}, status=400)
+    if len(prompt) > 1200:
+        prompt = prompt[:1200]
+
+    try:
+        from services.ai_assistant import build_ai_reply
+
+        reply, remaining, limit = await build_ai_reply(user, user.telegram_id, prompt)
+        return _json({"ok": True, "reply": reply, "remaining": remaining, "limit": limit})
+    except Exception:
+        logger.exception("dashboard AI action failed for {}", user.telegram_id)
+        return _json({"ok": False, "message": "تعذر تشغيل مساعد الذكاء حالياً"}, status=500)
+
+
 async def dashboard_health(request: web.Request) -> web.Response:
     return _json({"ok": True, "service": "dashboard", "date": date.today().isoformat()})
 
@@ -718,6 +740,7 @@ def create_dashboard_app() -> web.Application:
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/alerts", dashboard_alert_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/portfolio", dashboard_portfolio_action)
     app.router.add_post("/api/dashboard/{telegram_id}/{token}/opportunities", dashboard_saved_opportunity_action)
+    app.router.add_post("/api/dashboard/{telegram_id}/{token}/ai", dashboard_ai_action)
     return app
 
 
@@ -860,6 +883,45 @@ DASHBOARD_HTML = r"""
       padding-top: 12px;
     }
     .action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .insight-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .insight-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 70px; }
+    .insight-card span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .insight-card strong { display: block; font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
+    .ai-chat {
+      display: grid;
+      gap: 10px;
+      max-height: 360px;
+      overflow: auto;
+      padding: 4px;
+      margin-bottom: 10px;
+    }
+    .ai-msg {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      white-space: pre-wrap;
+      line-height: 1.65;
+      background: var(--panel-2);
+    }
+    .ai-msg.user {
+      margin-right: 18%;
+      background: rgba(39, 211, 178, .1);
+      border-color: rgba(39, 211, 178, .28);
+    }
+    .ai-msg.bot {
+      margin-left: 12%;
+      background: rgba(255,255,255,.035);
+    }
+    .ai-suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .ai-suggestions button, .ai-form button {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font: inherit;
+    }
+    .ai-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
     button.primary, .action-panel button.primary { background: rgba(39, 211, 178, .14); border-color: rgba(39, 211, 178, .35); color: var(--teal); }
     .action-panel button.warn { background: rgba(244, 184, 96, .12); border-color: rgba(244, 184, 96, .32); color: var(--amber); }
     button:disabled { opacity: .55; cursor: not-allowed; }
@@ -881,7 +943,7 @@ DASHBOARD_HTML = r"""
     .health { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .health div { background: var(--panel-2); border-radius: 8px; padding: 12px; }
     .small { font-size: 13px; }
-    #overview-section, #opportunities-section, #chart-section, #brief-section, #watch-section, #alerts-section,
+    #overview-section, #opportunities-section, #chart-section, #ai-section, #brief-section, #watch-section, #alerts-section,
     #system-section, #portfolio-section, #saved-section, #activity-section, #symbols-section {
       scroll-margin-top: 18px;
     }
@@ -900,6 +962,8 @@ DASHBOARD_HTML = r"""
       .metric .value { font-size: 24px; }
       .health { grid-template-columns: 1fr; }
       .portfolio-form, .portfolio-summary { grid-template-columns: 1fr; }
+      .insight-grid, .ai-suggestions, .ai-form { grid-template-columns: 1fr; }
+      .ai-msg.user, .ai-msg.bot { margin-left: 0; margin-right: 0; }
     }
   </style>
 </head>
@@ -911,6 +975,7 @@ DASHBOARD_HTML = r"""
         <button class="active" data-target="overview-section">لوحتي</button>
         <button data-target="opportunities-section">الفرص</button>
         <button data-target="chart-section">الشارت</button>
+        <button data-target="ai-section">الذكاء</button>
         <button data-target="watch-section">المتابعة</button>
         <button data-target="alerts-section">التنبيهات</button>
         <button data-target="system-section">النظام</button>
@@ -958,6 +1023,12 @@ DASHBOARD_HTML = r"""
                 <span class="name" id="selected-symbol">-</span>
                 <span class="muted small" id="chart-meta">دعم ومقاومة وRSI تظهر بعد تحميل الشارت</span>
               </div>
+              <div class="insight-grid" id="chart-insights">
+                <div class="insight-card"><span>السكور</span><strong id="ins-score">-</strong></div>
+                <div class="insight-card"><span>الاتجاه</span><strong id="ins-trend">-</strong></div>
+                <div class="insight-card"><span>المخاطرة</span><strong id="ins-risk">-</strong></div>
+                <div class="insight-card"><span>التغير</span><strong id="ins-change">-</strong></div>
+              </div>
               <div class="action-row">
                 <button class="primary" id="add-watch">إضافة للقائمة</button>
                 <button class="warn" id="remove-watch">حذف من القائمة</button>
@@ -997,6 +1068,26 @@ DASHBOARD_HTML = r"""
           <div class="panel" id="brief-section">
             <h2>ملخص VIP اليوم</h2>
             <div id="vip-brief" class="status">جاري تجهيز الملخص...</div>
+          </div>
+          <div class="panel" id="ai-section">
+            <div class="row-top">
+              <h2>مساعد VIP الذكي</h2>
+              <span class="muted small" id="ai-limit">Gemini</span>
+            </div>
+            <div id="ai-chat" class="ai-chat">
+              <div class="ai-msg bot">اختر رمز من الشارت واسألني عن القراءة، المخاطرة، الدعم والمقاومة، أو خطة متابعة بسيطة.</div>
+            </div>
+            <div class="ai-suggestions">
+              <button data-ai-prompt="حلل الرمز الحالي باختصار واذكر أهم مستويات المتابعة">حلل الرمز</button>
+              <button data-ai-prompt="وش أهم المخاطر في الرمز الحالي؟">المخاطر</button>
+              <button data-ai-prompt="اعطني خطة متابعة للرمز الحالي مع دعم ومقاومة وتنبيه مناسب">خطة متابعة</button>
+              <button data-ai-prompt="قارن قراءة الرمز الحالي مع السوق الحالي واذكر هل الانتظار أفضل">قرار سريع</button>
+            </div>
+            <div class="ai-form">
+              <input id="ai-input" placeholder="اكتب سؤالك عن الرمز الحالي أو السوق" autocomplete="off" />
+              <button class="primary" id="ai-send">إرسال</button>
+            </div>
+            <div class="feedback" id="ai-feedback"></div>
           </div>
           <div class="panel" id="watch-section">
             <h2>قائمتي</h2>
@@ -1104,6 +1195,56 @@ DASHBOARD_HTML = r"""
 
     function setPortfolioFeedback(text) {
       document.getElementById("portfolio-feedback").textContent = text || "";
+    }
+
+    function setAiFeedback(text) {
+      document.getElementById("ai-feedback").textContent = text || "";
+    }
+
+    function currentSymbolTitle() {
+      return `${currentSymbol.name_ar || currentSymbol.name_en || currentSymbol.symbol} (${currentSymbol.symbol} - ${marketName(currentSymbol.market)})`;
+    }
+
+    function pushAiMessage(role, text) {
+      const chat = document.getElementById("ai-chat");
+      const node = document.createElement("div");
+      node.className = `ai-msg ${role}`;
+      node.textContent = text;
+      chat.appendChild(node);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendAiPrompt(prompt) {
+      const text = String(prompt || document.getElementById("ai-input").value || "").trim();
+      if (!text) {
+        setAiFeedback("اكتب سؤالك أولاً");
+        return;
+      }
+      const context = [
+        `الرمز الحالي: ${currentSymbolTitle()}`,
+        `الفريم: ${currentInterval}`,
+        `السعر: ${fmt(latestChartData.last_price, 4)}`,
+        `التغير: ${fmt(latestChartData.change_percent, 2)}%`,
+        `السكور: ${latestChartData.score ? fmt(latestChartData.score, 1) + "/100" : "-"}`,
+        `الدعم: ${fmt(latestChartData.support, 4)}`,
+        `المقاومة: ${fmt(latestChartData.resistance, 4)}`,
+        `RSI: ${latestChartData.rsi ? fmt(latestChartData.rsi, 1) : "-"}`,
+      ].join("\n");
+      pushAiMessage("user", text);
+      document.getElementById("ai-input").value = "";
+      setBusy("ai-send", true);
+      setAiFeedback("جاري تجهيز الرد...");
+      try {
+        const data = await postJson(`${root}/ai`, { prompt: `${context}\n\nسؤال المستخدم: ${text}` });
+        pushAiMessage("bot", data.reply || "ما وصل رد واضح حالياً");
+        document.getElementById("ai-limit").textContent = data.limit > 0 ? `متبقي ${data.remaining}/${data.limit}` : "Gemini";
+        setAiFeedback("");
+      } catch (err) {
+        pushAiMessage("bot", err.message || "تعذر تشغيل مساعد الذكاء حالياً");
+        setAiFeedback("");
+      } finally {
+        setBusy("ai-send", false);
+      }
     }
 
     function setBusy(id, busy) {
@@ -1371,6 +1512,12 @@ DASHBOARD_HTML = r"""
         document.getElementById("chart-status").textContent = `${data.symbol} | ${data.interval} | حي`;
         document.getElementById("chart-meta").textContent =
           `السعر ${fmt(data.last_price, 4)} | التغير ${fmt(data.change_percent, 2)}% | السكور ${data.score ? fmt(data.score, 1) + "/100" : "-"} | دعم ${fmt(data.support, 4)} | مقاومة ${fmt(data.resistance, 4)} | RSI ${data.rsi ? fmt(data.rsi, 1) : "-"}`;
+        document.getElementById("ins-score").textContent = data.score ? `${fmt(data.score, 1)}/100` : "-";
+        document.getElementById("ins-trend").textContent = data.trend || data.rating || "-";
+        document.getElementById("ins-risk").textContent = data.risk || "-";
+        const changeEl = document.getElementById("ins-change");
+        changeEl.textContent = `${fmt(data.change_percent, 2)}%`;
+        changeEl.className = Number(data.change_percent || 0) >= 0 ? "up" : "down";
         if (!document.getElementById("pf-entry").value && data.last_price) {
           document.getElementById("pf-entry").placeholder = `سعر الدخول - الحالي ${fmt(data.last_price, 4)}`;
         }
@@ -1380,6 +1527,7 @@ DASHBOARD_HTML = r"""
         if (seq !== chartRequestSeq) return;
         document.getElementById("chart-status").textContent = "تعذر تحميل الشارت";
         document.getElementById("chart-meta").textContent = err.message || "جرب رمزاً أو فريماً مختلفاً";
+        ["ins-score", "ins-trend", "ins-risk", "ins-change"].forEach((id) => document.getElementById(id).textContent = "-");
       }
     }
 
@@ -1614,6 +1762,13 @@ DASHBOARD_HTML = r"""
     document.getElementById("save-opportunity").addEventListener("click", saveCurrentOpportunity);
     document.getElementById("create-alert").addEventListener("click", createCurrentAlert);
     document.getElementById("add-position").addEventListener("click", addPosition);
+    document.getElementById("ai-send").addEventListener("click", () => sendAiPrompt());
+    document.getElementById("ai-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") sendAiPrompt();
+    });
+    document.querySelectorAll("[data-ai-prompt]").forEach((btn) => {
+      btn.addEventListener("click", () => sendAiPrompt(btn.dataset.aiPrompt));
+    });
     document.getElementById("smart-resistance").addEventListener("click", () =>
       fillSmartAlert("price_above", latestChartData.resistance, "تم تعبئة تنبيه اختراق المقاومة")
     );
