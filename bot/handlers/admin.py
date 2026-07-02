@@ -84,6 +84,38 @@ def _activation_duration_label(code: ActivationCode) -> str:
     return f"{code.duration_days}d"
 
 
+def _activation_code_status(code: ActivationCode) -> tuple[str, str]:
+    if not code.is_active:
+        return "🔴", "معطل"
+    if code.max_uses > 0 and code.uses >= code.max_uses:
+        return "⚫", "مستنفذ"
+    expires_at = code.expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at < datetime.now(timezone.utc):
+        return "🟠", "منتهي"
+    return "🟢", "جاهز"
+
+
+def _activation_created_label(code: ActivationCode) -> str:
+    created = code.created_at
+    if not created:
+        return "-"
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    created = created.astimezone(settings.timezone)
+    return created.strftime("%Y-%m-%d %H:%M")
+
+
+def _activation_plan_label(plan: str) -> str:
+    return {
+        "basic": "Basic",
+        "pro": "Pro",
+        "vip": "VIP",
+        "lifetime": "Lifetime",
+    }.get(plan, plan)
+
+
 @router.message(Command("admin"))
 async def cmd_admin(msg: Message, state: FSMContext = None):
     if not is_admin(msg.from_user.id):
@@ -371,20 +403,50 @@ async def _admin_subs(cq: CallbackQuery):
 
 async def _admin_codes_menu(cq: CallbackQuery):
     async with get_session() as session:
-        result = await session.execute(select(ActivationCode).order_by(ActivationCode.id.desc()).limit(10))
+        result = await session.execute(select(ActivationCode).order_by(ActivationCode.id.desc()).limit(12))
         codes = result.scalars().all()
-        text = "🔑 **أكواد التفعيل**\n\n"
-        for c in codes:
-            active = "✅" if c.is_active else "❌"
-            text += f"{active} {c.code} | {c.plan} | {_activation_duration_label(c)} | {c.uses}/{c.max_uses}\n"
-    text += "\nاختر إجراء:"
+        total = (await session.execute(select(func.count(ActivationCode.id)))).scalar() or 0
+        ready = (
+            await session.execute(
+                select(func.count(ActivationCode.id)).where(
+                    ActivationCode.is_active == True,
+                    ActivationCode.uses < ActivationCode.max_uses,
+                )
+            )
+        ).scalar() or 0
+
+    lines = [
+        "🔑 <b>أكواد التفعيل</b>",
+        f"الإجمالي: {total} | الجاهزة: {ready}",
+        "",
+    ]
+    if not codes:
+        lines.append("لا توجد أكواد حتى الآن.")
+    else:
+        for index, c in enumerate(codes, start=1):
+            icon, status = _activation_code_status(c)
+            remaining = "مفتوح" if c.max_uses <= 0 else max(0, c.max_uses - c.uses)
+            lines.extend(
+                [
+                    f"{index}. {icon} <code>{c.code}</code>",
+                    f"   الخطة: {_activation_plan_label(c.plan)} | المدة: {_activation_duration_label(c)}",
+                    f"   الاستخدام: {c.uses}/{c.max_uses} | المتبقي: {remaining} | الحالة: {status}",
+                    f"   الإنشاء: {_activation_created_label(c)}",
+                    "",
+                ]
+            )
+    lines.append("اختر إجراء:")
+
     from bot.keyboards.main import back_button
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ إنشاء كود", callback_data="admin_codes_create")
+    for c in codes[:8]:
+        label = "تعطيل" if c.is_active else "تفعيل"
+        builder.button(text=f"{label} {c.code}", callback_data=f"admin_code_disable:{c.id}")
     builder.button(text="↩️ رجوع", callback_data="admin_panel")
     builder.adjust(1)
-    await cq.message.edit_text(text, reply_markup=builder.as_markup())
+    await cq.message.edit_text("\n".join(lines)[:3900], reply_markup=builder.as_markup())
     await cq.answer()
 
 
