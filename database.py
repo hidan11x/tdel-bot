@@ -66,6 +66,12 @@ def _run_lightweight_migrations(sync_conn):
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN referral_reward_claimed BOOLEAN DEFAULT FALSE"))
         if "affiliate_partner_id" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN affiliate_partner_id INTEGER"))
+        if "preferred_market" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN preferred_market VARCHAR"))
+        if "experience_level" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN experience_level VARCHAR"))
+        if "onboarding_complete" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_complete BOOLEAN DEFAULT FALSE"))
 
     if "price_trackers" in tables:
         columns = {col["name"] for col in inspector.get_columns("price_trackers")}

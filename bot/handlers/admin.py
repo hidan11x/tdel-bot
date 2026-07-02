@@ -222,6 +222,8 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_affiliate_mark_paid(cq, int(data.split(":")[1]))
     elif data == "admin_stats":
         await _admin_stats(cq)
+    elif data == "admin_finance":
+        await _admin_finance(cq)
     elif data == "admin_settings":
         await _admin_settings(cq)
     elif data == "admin_broadcast":
@@ -696,6 +698,135 @@ async def _admin_stats(cq: CallbackQuery):
         f"أخطاء اليوم: {errors_today}\n"
     )
     await cq.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await cq.answer()
+
+
+async def _admin_finance(cq: CallbackQuery):
+    now_dt = settings.now()
+    today = settings.today()
+    month_start = today.replace(day=1)
+    week_end = now_dt + timedelta(days=7)
+
+    async with get_session() as session:
+        revenue_total = (
+            await session.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.status == "completed"))
+        ).scalar() or 0
+        revenue_today = (
+            await session.execute(
+                select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                    Payment.status == "completed",
+                    func.date(Payment.created_at) == today,
+                )
+            )
+        ).scalar() or 0
+        revenue_month = (
+            await session.execute(
+                select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                    Payment.status == "completed",
+                    func.date(Payment.created_at) >= month_start,
+                )
+            )
+        ).scalar() or 0
+        paid_users = (
+            await session.execute(select(func.count(User.id)).where(User.plan != "free", User.is_banned == False))
+        ).scalar() or 0
+        expiring_soon = (
+            await session.execute(
+                select(func.count(User.id)).where(
+                    User.plan != "free",
+                    User.subscription_end.is_not(None),
+                    User.subscription_end <= week_end,
+                    User.subscription_end >= now_dt,
+                )
+            )
+        ).scalar() or 0
+        new_users_today = (
+            await session.execute(select(func.count(User.id)).where(func.date(User.created_at) == today))
+        ).scalar() or 0
+        codes_total = (await session.execute(select(func.count(ActivationCode.id)))).scalar() or 0
+        codes_used = (
+            await session.execute(select(func.coalesce(func.sum(ActivationCode.uses), 0)))
+        ).scalar() or 0
+        commissions_due = (
+            await session.execute(
+                select(func.coalesce(func.sum(AffiliateCommission.commission_amount), 0)).where(
+                    AffiliateCommission.status == "due"
+                )
+            )
+        ).scalar() or 0
+        commissions_paid = (
+            await session.execute(
+                select(func.coalesce(func.sum(AffiliateCommission.commission_amount), 0)).where(
+                    AffiliateCommission.status == "paid"
+                )
+            )
+        ).scalar() or 0
+        top_plans = (
+            await session.execute(
+                select(Payment.plan, func.count(Payment.id), func.coalesce(func.sum(Payment.amount), 0))
+                .where(Payment.status == "completed")
+                .group_by(Payment.plan)
+                .order_by(func.coalesce(func.sum(Payment.amount), 0).desc())
+            )
+        ).all()
+        top_partners = (
+            await session.execute(
+                select(
+                    AffiliatePartner.name,
+                    func.count(AffiliateCommission.id),
+                    func.coalesce(func.sum(AffiliateCommission.sale_amount), 0),
+                    func.coalesce(func.sum(AffiliateCommission.commission_amount), 0),
+                )
+                .join(AffiliateCommission, AffiliateCommission.partner_id == AffiliatePartner.id)
+                .group_by(AffiliatePartner.id, AffiliatePartner.name)
+                .order_by(func.coalesce(func.sum(AffiliateCommission.sale_amount), 0).desc())
+                .limit(5)
+            )
+        ).all()
+
+    conversion_hint = (float(revenue_month or 0) / paid_users) if paid_users else 0
+    lines = [
+        "💰 لوحة الأدمن المالية",
+        "",
+        f"إيراد اليوم: {float(revenue_today):,.2f} SAR",
+        f"إيراد الشهر: {float(revenue_month):,.2f} SAR",
+        f"الإيراد الكلي: {float(revenue_total):,.2f} SAR",
+        "",
+        f"المشتركون المدفوعون: {paid_users}",
+        f"ينتهون خلال 7 أيام: {expiring_soon}",
+        f"مستخدمون جدد اليوم: {new_users_today}",
+        f"متوسط إيراد الشهر لكل مشترك: {conversion_hint:,.2f} SAR",
+        "",
+        f"الأكواد: {codes_total} | الاستخدامات: {int(codes_used or 0)}",
+        f"عمولات مستحقة: {float(commissions_due):,.2f} SAR",
+        f"عمولات مدفوعة: {float(commissions_paid):,.2f} SAR",
+        "",
+        "الباقات الأعلى:",
+    ]
+    if top_plans:
+        for plan, count, amount in top_plans[:6]:
+            lines.append(f"• {plan}: {count} عملية | {float(amount):,.2f} SAR")
+    else:
+        lines.append("لا توجد مدفوعات محفوظة.")
+
+    lines.append("")
+    lines.append("أفضل الشركاء:")
+    if top_partners:
+        for name, count, sales, commission in top_partners:
+            lines.append(f"• {name}: {count} بيع | {float(sales):,.2f} SAR | عمولة {float(commission):,.2f}")
+    else:
+        lines.append("لا توجد مبيعات شركاء بعد.")
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="الشركاء", callback_data="admin_affiliates")
+    builder.button(text="الأكواد", callback_data="admin_codes")
+    builder.button(text="الاشتراكات", callback_data="admin_subs")
+    builder.button(text="تحديث", callback_data="admin_finance")
+    builder.button(text="رجوع", callback_data="admin_panel")
+    builder.adjust(2, 2, 1)
+    await cq.message.edit_text("\n".join(lines)[:3900], reply_markup=builder.as_markup())
     await cq.answer()
 
 

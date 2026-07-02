@@ -240,6 +240,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         ("🔑 الأكواد", "admin_codes"),
         ("🤝 الشركاء", "admin_affiliates"),
         ("🎫 الكوبونات", "admin_coupons"),
+        ("💰 المالية", "admin_finance"),
         ("📊 الإحصائيات", "admin_stats"),
         ("🩺 صحة النظام", "admin_health"),
         ("🔮 صلاحيات التوقع", "admin_prediction_access"),

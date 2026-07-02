@@ -55,6 +55,32 @@ async def _get_user(telegram_id: int):
         return result.scalar_one_or_none()
 
 
+def _onboarding_market_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="السوق السعودي", callback_data="onb_market:SAUDI")
+    builder.button(text="السوق الأمريكي", callback_data="onb_market:US")
+    builder.button(text="الكريبتو", callback_data="onb_market:CRYPTO")
+    builder.button(text="كل الأسواق", callback_data="onb_market:ALL")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def _onboarding_level_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="مبتدئ", callback_data="onb_level:beginner")
+    builder.button(text="متوسط", callback_data="onb_level:intermediate")
+    builder.button(text="محترف", callback_data="onb_level:advanced")
+    builder.adjust(3)
+    return builder.as_markup()
+
+
+async def _send_onboarding(message: Message):
+    await message.answer(
+        "خلنا نضبط تجربتك بسرعة.\n\nأي سوق تتابع أكثر؟",
+        reply_markup=_onboarding_market_keyboard(),
+    )
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, command=None, state=None):
     if state:
@@ -113,6 +139,10 @@ async def cmd_start(message: Message, command=None, state=None):
                 report = format_signal_message(signal)
                 await message.answer(f"📤 تحليل مشاركة (مشاهدات: {share_data['views']})\n\n{report[:3500]}")
                 return
+
+    if not getattr(user, "onboarding_complete", False):
+        await _send_onboarding(message)
+        return
 
     from config import settings
     from bot.keyboards.main import subscription_plans, back_button
@@ -482,6 +512,55 @@ async def cb_main_menu(callback: CallbackQuery):
         "اختر من القائمة أدناه:"
     )
     await callback.message.edit_text(text, reply_markup=main_menu(plan))
+
+
+@router.callback_query(F.data.startswith("onb_market:"))
+async def cb_onboarding_market(callback: CallbackQuery):
+    await callback.answer()
+    market = callback.data.split(":", 1)[1]
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == callback.from_user.id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.preferred_market = market
+            await session.commit()
+    labels = {
+        "SAUDI": "السوق السعودي",
+        "US": "السوق الأمريكي",
+        "CRYPTO": "الكريبتو",
+        "ALL": "كل الأسواق",
+    }
+    await callback.message.edit_text(
+        f"تم اختيار: {labels.get(market, market)}\n\nوش مستوى خبرتك في التداول؟",
+        reply_markup=_onboarding_level_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("onb_level:"))
+async def cb_onboarding_level(callback: CallbackQuery):
+    await callback.answer()
+    level = callback.data.split(":", 1)[1]
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == callback.from_user.id))
+        user = result.scalar_one_or_none()
+        if not user:
+            await callback.message.edit_text("اضغط /start أولاً لتفعيل حسابك.")
+            return
+        user.experience_level = level
+        user.onboarding_complete = True
+        await session.commit()
+        plan = user.plan
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔎 اسأل عن سهم", callback_data="ask_stock")
+    builder.button(text="📊 فحص سريع", callback_data="scan_quick")
+    builder.button(text="🚀 رادار الفرص", callback_data="opportunity_radar")
+    builder.button(text="🏠 القائمة الرئيسية", callback_data="main_menu")
+    builder.adjust(2)
+    await callback.message.edit_text(
+        "تمام، ضبطت تجربتك.\n\nابدأ من هنا، والبوت بيتعامل مع الأسماء العربية والإنجليزية والرموز.",
+        reply_markup=builder.as_markup() if plan != "free" else main_menu(plan),
+    )
 
 
 @router.callback_query(F.data.startswith("menu:"))

@@ -14,6 +14,13 @@ from services.market_data import get_ohlcv
 from services.indicators import calculate_ema_series, find_support_resistance
 from services.scoring import calculate_score, get_risk_level
 
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    HAS_RTL = True
+except ImportError:
+    HAS_RTL = False
+
 
 CHART_DIR = os.path.join("data", "charts")
 
@@ -69,7 +76,17 @@ def _fmt_change(change: float) -> str:
 
 
 def _rtl(text: str) -> str:
-    return str(text)
+    text = str(text or "")
+    if not HAS_RTL:
+        return text
+    try:
+        return get_display(arabic_reshaper.reshape(text))
+    except Exception:
+        return text
+
+
+def _has_arabic(text: str) -> bool:
+    return any("\u0600" <= ch <= "\u06ff" for ch in str(text or ""))
 
 
 def _score_label(score: float) -> str:
@@ -376,10 +393,21 @@ def generate_chart(
         rsi_ax = axes[4] if len(axes) > 4 else None
         fig.subplots_adjust(top=0.875, bottom=0.105, left=0.055, right=0.985, hspace=0.05)
 
+        try:
+            price_range = max(float(df["High"].max() - df["Low"].min()), current_price * 0.02)
+            zone = price_range * 0.015
+            if support is not None and support > 0:
+                price_ax.axhspan(support - zone, support + zone, color="#16A34A", alpha=0.10, zorder=0)
+            if resistance is not None and resistance > 0:
+                price_ax.axhspan(resistance - zone, resistance + zone, color="#DC2626", alpha=0.10, zorder=0)
+            price_ax.axhline(current_price, color="#E2E8F0", linestyle=":", linewidth=1.0, alpha=0.65)
+        except Exception:
+            pass
+
         fig.text(
             0.055,
             0.965,
-            title_text,
+            _rtl(title_text) if _has_arabic(title_text) else title_text,
             color="#F8FAFC",
             fontsize=14,
             fontweight="bold",
@@ -542,7 +570,7 @@ def generate_chart(
         fig.text(
             0.985,
             0.012,
-            "Automated educational reading, not financial advice",
+            _rtl("قراءة آلية تعليمية وليست توصية مالية"),
             ha="right",
             va="bottom",
             color="#64748B",
@@ -572,7 +600,8 @@ def generate_chart(
         caption = (
             f"{display_name} - {symbol}\n"
             f"السعر: {_fmt_price(current_price)} | التغير: {_fmt_change(change_pct)}\n"
-            f"السكور: {score_value:.0f}/100 | المخاطرة: {risk_label}"
+            f"التقييم: {score_value:.0f}/100 | المخاطرة: {risk_label}\n"
+            f"الدعم: {_fmt_price(support)} | المقاومة: {_fmt_price(resistance)}"
         )
         return (chart_bytes, caption)
 
