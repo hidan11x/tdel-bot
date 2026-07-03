@@ -154,6 +154,8 @@ def extract_reasons(scan_result: dict) -> list[str]:
 
 def extract_warnings(scan_result: dict) -> list[str]:
     warnings: list[str] = []
+    if scan_result.get("data_quality") == "quote_only" or (scan_result.get("indicators") or {}).get("quote_only"):
+        warnings.append("البيانات التاريخية غير كافية؛ القراءة مبنية على السعر الحالي فقط.")
     trend = (scan_result.get("trend") or "sideways").lower()
     current_price = scan_result.get("current_price")
     resistance = scan_result.get("resistance")

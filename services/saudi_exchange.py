@@ -62,6 +62,19 @@ def normalize_saudi_symbol(symbol: str) -> str:
     return raw.replace(".SR", "")
 
 
+def _saudi_identifier_candidates(symbol: str, identifier: str = "") -> list[str]:
+    values = []
+    for item in (symbol, identifier):
+        raw = (item or "").strip()
+        normalized = normalize_saudi_symbol(raw)
+        if normalized:
+            values.append(normalized)
+        if raw:
+            values.append(raw.upper().replace(".SR", ""))
+            values.append(raw)
+    return [item for item in dict.fromkeys(values) if item]
+
+
 def _to_float(value: Any) -> Optional[float]:
     if value is None:
         return None
@@ -100,7 +113,7 @@ def _normalize_record(row: dict[str, Any], source: str) -> Optional[SaudiQuote]:
     if not symbol:
         return None
     price = _to_float(_first(row, ("lastTradePrice", "last", "price", "close", "last_price")))
-    previous_close = _to_float(_first(row, ("previousClosePrice", "previousClose", "prevClose", "prev_close")))
+    previous_close = _to_float(_first(row, ("previousClosePrice", "previousClose", "previous_close", "prevClose", "prev_close")))
     change_value = _to_float(_first(row, ("netChange", "change", "changeValue", "change_value")))
     change_percent = _to_float(_first(row, ("precentChange", "percentChange", "changePercent", "change_percent")))
     source_updated_at = str(
@@ -182,16 +195,22 @@ def _fetch_sahmk_companies(timeout: int = 25) -> list[dict[str, Any]]:
 
 
 def _fetch_sahmk_single_quote(symbol: str, identifier: str = "", timeout: int = 15) -> Optional[SaudiQuote]:
-    normalized = normalize_saudi_symbol(symbol or identifier)
-    if not normalized and identifier:
-        normalized = str(identifier).strip()
-    if not normalized:
+    if not settings.sahmk_api_key:
         return None
-    params = {"identifier": identifier} if identifier else {}
-    payload = _sahmk_get(f"/quote/{normalized}/", params, timeout=timeout)
-    rows = _extract_rows(payload)
-    quotes = _normalize_quotes(rows, "sahmk")
-    return quotes[0] if quotes else None
+    last_error: Exception | None = None
+    for candidate in _saudi_identifier_candidates(symbol, identifier):
+        try:
+            payload = _sahmk_get(f"/quote/{candidate}/", timeout=timeout)
+            rows = _extract_rows(payload)
+            quotes = _normalize_quotes(rows, "sahmk")
+            if quotes:
+                return quotes[0]
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return None
 
 
 def _fetch_sahmk_quotes(timeout: int = 25) -> list[SaudiQuote]:
@@ -343,20 +362,29 @@ def refresh_saudi_quotes(force: bool = False) -> list[SaudiQuote]:
 
 
 def get_saudi_quote(symbol: str, force_refresh: bool = False) -> Optional[SaudiQuote]:
+    global _last_refresh, _last_source
     normalized = normalize_saudi_symbol(symbol)
+    quote = _quotes_cache.get(normalized)
+    if quote and not force_refresh and time.time() - _last_refresh < settings.saudi_prices_ttl_seconds:
+        return quote
+
+    if settings.sahmk_api_key:
+        try:
+            quote = _fetch_sahmk_single_quote(normalized or symbol, identifier=symbol)
+            if quote:
+                _quotes_cache[quote.symbol] = quote
+                _last_refresh = time.time()
+                _last_source = "sahmk"
+                _save_file_cache(list(_quotes_cache.values()))
+                return quote
+        except Exception as exc:
+            logger.warning("SAHMK single quote fallback failed for {}: {}", symbol, exc)
+
     quotes = refresh_saudi_quotes(force=force_refresh)
     by_symbol = {quote.symbol: quote for quote in quotes}
     quote = by_symbol.get(normalized)
-    if quote or not settings.sahmk_api_key:
+    if quote:
         return quote
-    try:
-        quote = _fetch_sahmk_single_quote(normalized or symbol, identifier=symbol)
-        if quote:
-            _quotes_cache[quote.symbol] = quote
-            _save_file_cache(list(_quotes_cache.values()))
-            return quote
-    except Exception as exc:
-        logger.warning("SAHMK single quote fallback failed for {}: {}", symbol, exc)
     return None
 
 

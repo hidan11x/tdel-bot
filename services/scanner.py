@@ -16,6 +16,85 @@ from services.compliance import disclaimer
 from config import settings
 
 
+def _quote_only_indicators(price: float, change_percent: float) -> Dict[str, Any]:
+    return {
+        "current_price": price,
+        "trend": "sideways",
+        "rsi": None,
+        "macd_line": None,
+        "macd_signal": None,
+        "macd_histogram": None,
+        "ema_20": None,
+        "ema_50": None,
+        "ema_200": None,
+        "sma_20": None,
+        "sma_50": None,
+        "sma_200": None,
+        "bb_upper": None,
+        "bb_middle": None,
+        "bb_lower": None,
+        "atr": None,
+        "volume": None,
+        "avg_volume": None,
+        "relative_volume": None,
+        "support": price,
+        "resistance": price,
+        "adx": None,
+        "stoch_k": None,
+        "stoch_d": None,
+        "vwap": None,
+        "quote_only": True,
+    }
+
+
+async def _quote_only_scan(
+    symbol: str,
+    market: str,
+    timeframe: str,
+    sym_info: Optional[Dict[str, Any]],
+    closes: List[float] | None = None,
+) -> Optional[Dict[str, Any]]:
+    current_price = await asyncio.to_thread(get_current_price_sync, symbol, market)
+    if current_price is None:
+        return None
+
+    safe_closes = [float(value) for value in (closes or []) if value is not None]
+    if len(safe_closes) < 2:
+        safe_closes = [float(current_price), float(current_price)]
+    elif safe_closes[-1] != current_price:
+        safe_closes[-1] = float(current_price)
+
+    prev_close = safe_closes[-2] if len(safe_closes) >= 2 else safe_closes[-1]
+    change_percent = ((current_price - prev_close) / prev_close) * 100 if prev_close else 0.0
+    indicators = _quote_only_indicators(float(current_price), change_percent)
+    score = calculate_score(indicators)
+    rating = get_rating(score.overall)
+    risk_level = get_risk_level(score.risk_score)
+
+    return {
+        "symbol": symbol,
+        "market": market,
+        "timeframe": timeframe,
+        "name_ar": sym_info["name_ar"] if sym_info else symbol,
+        "name_en": sym_info["name_en"] if sym_info else symbol,
+        "sector": sym_info["sector"] if sym_info else None,
+        "current_price": float(current_price),
+        "change_percent": change_percent,
+        "trend": "sideways",
+        "support": min(safe_closes),
+        "resistance": max(safe_closes),
+        "closes": safe_closes,
+        "indicators": indicators,
+        "score": score,
+        "rating": rating,
+        "risk_level": risk_level,
+        "summary": "بيانات السعر متوفرة، لكن التاريخ الفني غير كاف حاليا لإشارة قوية.",
+        "disclaimer": disclaimer(),
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "data_quality": "quote_only",
+    }
+
+
 async def scan_symbol(symbol: str, market: str, timeframe: str = "1d") -> Optional[Dict[str, Any]]:
     try:
         from services.symbols_service import get_symbol_info
@@ -23,7 +102,7 @@ async def scan_symbol(symbol: str, market: str, timeframe: str = "1d") -> Option
 
         closes = await asyncio.to_thread(get_close_prices, symbol, market, timeframe, 250)
         if not closes or len(closes) < 30:
-            return None
+            return await _quote_only_scan(symbol, market, timeframe, sym_info, closes)
 
         ohlcv = await asyncio.to_thread(get_ohlcv, symbol, market, timeframe, 250)
         current_price = await asyncio.to_thread(get_current_price_sync, symbol, market)
