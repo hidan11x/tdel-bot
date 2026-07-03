@@ -1,81 +1,133 @@
-# Telegram Trading Scanner Bot (US + Saudi + Crypto)
+# Telegram Trading Bot
 
-## Features
-- Multi-market signal scanner:
-  - US stocks (via TwelveData)
-  - Saudi stocks (via TwelveData)
-  - Crypto pairs including BTC (via Binance public API)
-- Strategy: EMA crossover + RSI filter
-- Telegram summary notifications (anti-spam chunking)
-- JSONL logs:
-  - `scanner_results.jsonl`
-  - `scanner_errors.jsonl`
+بوت تليجرام لمتابعة الأسواق مع لوحة VIP وواجهة API وسيطة للسوق السعودي.
 
-## Important Safety Notes
-- This project is **not financial advice**.
-- Default mode is signal scanning, not live order execution.
-- Keep API keys secret.
-- If bot token is exposed, regenerate it via BotFather.
+## المزايا الحالية
 
-## Setup
+- بحث ذكي بالرمز أو اسم الشركة بالعربي/الإنجليزي.
+- دعم السوق السعودي، الأمريكي، والعملات الرقمية.
+- بطاقات أسعار مرتبة للأسهم السعودية.
+- شارتات، تنبيهات، متابعة، فحص فني، ولوحة VIP.
+- API وسيط للسوق السعودي مع كاش وحد طلبات.
 
-1) Create and activate virtual environment (Windows CMD):
+## تشغيل محلي
+
 ```cmd
 cd C:\Users\hidan\Desktop\telegram-trading-bot
 python -m venv .venv
 .venv\Scripts\activate
-```
-
-2) Install dependencies:
-```cmd
 pip install -r requirements.txt
+python start_prod.py
 ```
 
-3) Configure environment:
-```cmd
-copy .env.example .env
-```
-Then edit `.env` and set:
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- `TWELVEDATA_API_KEY`
+## Railway
 
-## Run scanner
-```cmd
-python scanner.py
-```
+Railway يشغل المشروع عبر:
 
-## Optional legacy single-symbol paper mode
-```cmd
-python main.py
-```
-
-## Railway deployment
-Railway uses `nixpacks.toml`, which starts the bot with:
 ```cmd
 python start_prod.py
 ```
 
-Set these environment variables in Railway:
-- `BOT_TOKEN`
-- `ADMIN_IDS`
-- `DATABASE_URL`
-- `MARKET_TIMEZONE=Asia/Riyadh`
-- `DASHBOARD_BASE_URL` public Railway URL for VIP dashboard links, if `RAILWAY_PUBLIC_DOMAIN` is not available
+أهم المتغيرات:
 
-## Symbol lists
-Edit:
-- `symbols_us.txt`
-- `symbols_saudi.txt`
-- `symbols_crypto.txt`
+```env
+BOT_TOKEN="ضع توكن البوت"
+ADMIN_IDS="8601339909"
+DATABASE_URL="postgresql://..."
+DASHBOARD_BASE_URL="https://your-service.up.railway.app"
+DASHBOARD_PORT="8080"
+MARKET_TIMEZONE="Asia/Riyadh"
+YFINANCE_ENABLED="true"
+BINANCE_ENABLED="true"
+SAUDI_EXCHANGE_ENABLED="true"
+SAUDI_FREE_FALLBACK_ENABLED="true"
+SAUDI_API_CACHE_SECONDS="180"
+SAUDI_API_RATE_LIMIT_PER_MINUTE="60"
+SAUDI_API_KEY="اختياري-لجعل-api-خاص"
+```
 
-## Logs
-- `scanner_results.jsonl`: per-symbol scan records
-- `scanner_errors.jsonl`: API/network/symbol errors
+## Saudi Market Mediator API
 
-## Testing Guidance
-Recommended before production:
-- Validate API keys and chat delivery
-- Validate at least one symbol from each market
-- Validate summary message chunking
-- Validate handling of TwelveData rate limits/errors
+الـ API يعمل داخل نفس رابط Railway. يحاول قراءة بيانات Saudi Exchange أولاً، وإذا تعذر الوصول من السيرفر بسبب الحجب أو عدم توفر endpoint مستقر يستخدم fallback مجاني مؤجل ويعرض المصدر بوضوح. النظام يعرض بيانات السوق فقط ولا يقدم أوامر شراء/بيع أو توصيات.
+
+### جلب سهم
+
+```http
+GET /stock/{symbol}
+```
+
+أمثلة:
+
+```cmd
+curl "https://tdel-bot-production.up.railway.app/stock/1120"
+curl "https://tdel-bot-production.up.railway.app/stock/الراجحي"
+```
+
+إذا فعلت `SAUDI_API_KEY`:
+
+```cmd
+curl -H "X-API-Key: YOUR_KEY" "https://tdel-bot-production.up.railway.app/stock/1120"
+```
+
+الاستجابة:
+
+```json
+{
+  "ok": true,
+  "symbol": "1120",
+  "name": "مصرف الراجحي",
+  "price": "xx.xx",
+  "change": "+x.xx",
+  "changePercent": "+x.xx%",
+  "high": "xx.xx",
+  "low": "xx.xx",
+  "volume": "123,456",
+  "lastUpdate": "2026-07-03 10:30:00",
+  "source": "Saudi Exchange"
+}
+```
+
+### البحث
+
+```http
+GET /search?q=الراجحي
+GET /api/saudi/search?q=أرامكو&limit=10
+```
+
+يرجع قائمة مطابقة:
+
+```json
+{
+  "ok": true,
+  "query": "الراجحي",
+  "items": [
+    {
+      "symbol": "1120",
+      "yahooSymbol": "1120.SR",
+      "name": "مصرف الراجحي",
+      "market": "SAUDI"
+    }
+  ]
+}
+```
+
+### المسارات البديلة
+
+- `GET /api/saudi/stock/{symbol}`
+- `GET /api/saudi/search?q=...`
+
+## ربط البوت
+
+عند كتابة المستخدم `1120` أو `الراجحي` أو `أرامكو`:
+
+- يحاول البوت حذف رسالة الانتظار.
+- يجلب أحدث بيانات متاحة من خدمة السوق السعودي.
+- يرسل بطاقة مرتبة فيها السعر، التغير، النسبة، الأعلى، الأدنى، الحجم، آخر تحديث، والمصدر.
+- يضيف أزرار: تحديث، تفاصيل، رسم بياني، متابعة، حذف من القائمة.
+
+## ملاحظات مهمة
+
+- البيانات قد تكون مؤجلة حسب المصدر المتاح.
+- إذا كان Saudi Exchange يمنع طلبات السيرفر، سيظهر fallback بدلاً من تعطيل البوت.
+- استخدم `SAUDI_API_KEY` إذا تبي الـ API خاص لك فقط.
+- لا تضع التوكنات أو مفاتيح API في Git.

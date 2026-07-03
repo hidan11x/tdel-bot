@@ -1053,10 +1053,86 @@ async def cb_quick_chart(callback: CallbackQuery):
         )
 
 
+def _saudi_stock_keyboard(symbol: str):
+    clean = symbol.replace(".SR", "").upper()
+    yahoo_symbol = f"{clean}.SR"
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 تحديث", callback_data=f"sa_stock_refresh:{clean}")
+    builder.button(text="📋 تفاصيل", callback_data=f"sa_stock_details:{clean}")
+    builder.button(text="📈 رسم بياني", callback_data=f"quick_chart:{yahoo_symbol}:SAUDI")
+    builder.button(text="⭐ متابعة", callback_data=f"watch_add:{yahoo_symbol}:saudi")
+    builder.button(text="❌ حذف من القائمة", callback_data=f"watch_remove:{yahoo_symbol}:saudi")
+    builder.button(text="↩️ رجوع", callback_data="main_menu")
+    builder.adjust(2, 2, 1, 1)
+    return builder.as_markup()
+
+
+async def _send_saudi_stock_card(message: Message, query: str, wait_msg: Message | None = None) -> bool:
+    try:
+        from services.saudi_api import format_saudi_stock_message, get_saudi_stock_payload
+
+        payload = await get_saudi_stock_payload(query)
+        text = format_saudi_stock_message(payload)
+        if wait_msg:
+            try:
+                await wait_msg.delete()
+            except Exception:
+                await wait_msg.edit_text(text, reply_markup=_saudi_stock_keyboard(payload["symbol"]))
+                return True
+        await message.answer(text, reply_markup=_saudi_stock_keyboard(payload["symbol"]))
+        return True
+    except Exception:
+        return False
+
+
+async def _edit_saudi_stock_card(callback: CallbackQuery, query: str, force: bool = False, details: bool = False):
+    try:
+        from services.saudi_api import (
+            SaudiSourceUnavailable,
+            SaudiStockNotFound,
+            format_saudi_stock_message,
+            get_saudi_stock_payload,
+        )
+
+        payload = await get_saudi_stock_payload(query, force=force)
+        text = format_saudi_stock_message(payload, details=details)
+        await callback.message.edit_text(text, reply_markup=_saudi_stock_keyboard(payload["symbol"]))
+    except SaudiStockNotFound:
+        await callback.message.edit_text("⚠️ لم أجد هذا السهم في السوق السعودي.", reply_markup=back_button("main_menu"))
+    except SaudiSourceUnavailable:
+        await callback.message.edit_text(
+            "⚠️ مصدر بيانات السوق السعودي غير متاح حالياً. جرّب بعد قليل.",
+            reply_markup=back_button("main_menu"),
+        )
+    except Exception:
+        await callback.message.edit_text(
+            "⚠️ تعذر تحديث بيانات السهم الآن. جرّب بعد قليل.",
+            reply_markup=back_button("main_menu"),
+        )
+
+
+@router.callback_query(F.data.startswith("sa_stock_refresh:"))
+async def cb_sa_stock_refresh(callback: CallbackQuery):
+    symbol = callback.data.split(":", 1)[1]
+    await callback.answer("جاري التحديث...")
+    await _edit_saudi_stock_card(callback, symbol, force=True)
+
+
+@router.callback_query(F.data.startswith("sa_stock_details:"))
+async def cb_sa_stock_details(callback: CallbackQuery):
+    symbol = callback.data.split(":", 1)[1]
+    await callback.answer()
+    await _edit_saudi_stock_card(callback, symbol, details=True)
+
+
 async def _auto_search(message: Message, query: str):
     msg = await message.answer(f"🔍 جاري البحث عن '{query}'...")
 
     detected = await auto_detect_symbol(query)
+
+    if detected and detected.get("market") == "SAUDI" and detected.get("source") in ("db", "db_fuzzy", "common_alias", "pattern"):
+        if await _send_saudi_stock_card(message, detected["symbol"], wait_msg=msg):
+            return
 
     if detected and detected.get("alternatives"):
         results = await smart_search(query)
@@ -1071,6 +1147,10 @@ async def _auto_search(message: Message, query: str):
         market = detected["market"]
         name = detected.get("name_ar") or detected.get("name_en") or symbol
         sector = detected.get("sector")
+
+        if market == "SAUDI":
+            if await _send_saudi_stock_card(message, symbol, wait_msg=msg):
+                return
 
         sector_line = f"🏢 القطاع: {sector}\n" if sector else ""
         market_label = MARKET_DISPLAY.get(market.lower(), market)

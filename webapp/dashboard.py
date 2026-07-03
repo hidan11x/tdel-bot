@@ -36,6 +36,7 @@ from services.subscriptions import can_add_alert, can_add_watchlist_item
 
 RADAR_TTL_SECONDS = 90
 _radar_cache: dict[str, Any] = {"expires": 0.0, "items": []}
+_saudi_api_hits: dict[str, list[float]] = {}
 
 
 def _env_value(key: str, default: str = "") -> str:
@@ -47,6 +48,38 @@ def _env_value(key: str, default: str = "") -> str:
 
 def _json(data: dict[str, Any], status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers={"Cache-Control": "no-store"})
+
+
+def _saudi_api_client_key(request: web.Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return request.remote or "unknown"
+
+
+def _check_saudi_api_access(request: web.Request) -> web.Response | None:
+    if settings.saudi_api_key:
+        token = request.headers.get("X-API-Key") or request.query.get("api_key", "")
+        if token != settings.saudi_api_key:
+            return _json({"ok": False, "error": "unauthorized", "message": "Invalid Saudi API key"}, status=403)
+
+    now = time.time()
+    key = _saudi_api_client_key(request)
+    window_start = now - 60
+    hits = [stamp for stamp in _saudi_api_hits.get(key, []) if stamp >= window_start]
+    if len(hits) >= settings.saudi_api_rate_limit_per_minute:
+        _saudi_api_hits[key] = hits
+        return _json(
+            {
+                "ok": False,
+                "error": "rate_limited",
+                "message": "Too many Saudi API requests. Try again shortly.",
+            },
+            status=429,
+        )
+    hits.append(now)
+    _saudi_api_hits[key] = hits
+    return None
 
 
 async def _request_json(request: web.Request) -> dict[str, Any]:
@@ -836,6 +869,80 @@ async def dashboard_affiliates(request: web.Request) -> web.Response:
     )
 
 
+async def saudi_stock_api(request: web.Request) -> web.Response:
+    blocked = _check_saudi_api_access(request)
+    if blocked is not None:
+        return blocked
+
+    symbol = request.match_info.get("symbol", "").strip()
+    force = request.query.get("refresh", "").lower() in {"1", "true", "yes"}
+    if not symbol:
+        return _json({"ok": False, "error": "missing_symbol", "message": "Stock symbol is required"}, status=400)
+
+    try:
+        from services.saudi_api import SaudiSourceUnavailable, SaudiStockNotFound, get_saudi_stock_payload
+
+        payload = await asyncio.wait_for(get_saudi_stock_payload(symbol, force=force), timeout=35)
+        return _json(payload)
+    except SaudiStockNotFound:
+        return _json(
+            {"ok": False, "error": "not_found", "message": "Saudi stock was not found", "query": symbol},
+            status=404,
+        )
+    except SaudiSourceUnavailable:
+        return _json(
+            {
+                "ok": False,
+                "error": "source_unavailable",
+                "message": "Saudi market data source is currently unavailable",
+                "query": symbol,
+            },
+            status=503,
+        )
+    except asyncio.TimeoutError:
+        return _json(
+            {"ok": False, "error": "timeout", "message": "Saudi market data request timed out", "query": symbol},
+            status=504,
+        )
+    except Exception:
+        logger.exception("Saudi stock API failed for {}", symbol)
+        return _json(
+            {"ok": False, "error": "server_error", "message": "Saudi stock API failed", "query": symbol},
+            status=500,
+        )
+
+
+async def saudi_search_api(request: web.Request) -> web.Response:
+    blocked = _check_saudi_api_access(request)
+    if blocked is not None:
+        return blocked
+
+    query = request.query.get("q", "").strip()
+    if not query:
+        return _json({"ok": False, "error": "missing_query", "message": "Search query is required"}, status=400)
+    try:
+        limit = min(30, max(1, int(request.query.get("limit", "10"))))
+    except ValueError:
+        limit = 10
+
+    try:
+        from services.saudi_api import search_saudi_stocks
+
+        items = await asyncio.wait_for(search_saudi_stocks(query, limit=limit), timeout=12)
+        return _json({"ok": True, "query": query, "items": items, "count": len(items)})
+    except asyncio.TimeoutError:
+        return _json(
+            {"ok": False, "error": "timeout", "message": "Saudi stock search timed out", "query": query},
+            status=504,
+        )
+    except Exception:
+        logger.exception("Saudi search API failed for {}", query)
+        return _json(
+            {"ok": False, "error": "server_error", "message": "Saudi stock search failed", "query": query},
+            status=500,
+        )
+
+
 async def dashboard_health(request: web.Request) -> web.Response:
     return _json({"ok": True, "service": "dashboard", "date": date.today().isoformat()})
 
@@ -843,6 +950,10 @@ async def dashboard_health(request: web.Request) -> web.Response:
 def create_dashboard_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", dashboard_health)
+    app.router.add_get("/stock/{symbol}", saudi_stock_api)
+    app.router.add_get("/search", saudi_search_api)
+    app.router.add_get("/api/saudi/stock/{symbol}", saudi_stock_api)
+    app.router.add_get("/api/saudi/search", saudi_search_api)
     app.router.add_get("/dashboard/{telegram_id}/{token}", dashboard_page)
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/summary", dashboard_summary)
     app.router.add_get("/api/dashboard/{telegram_id}/{token}/radar", dashboard_radar)
