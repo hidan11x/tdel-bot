@@ -12,6 +12,7 @@ pandas-ta==0.4.71b0
 pillow==12.2.0
 python-dotenv==1.0.1
 requests==2.32.3
+curl_cffi==0.15.0
 SQLAlchemy==2.0.51
 yfinance==1.5.1
 rapidfuzz==3.14.5

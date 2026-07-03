@@ -59,14 +59,15 @@ class Settings:
     saudi_prices_ttl_seconds: int = field(default_factory=lambda: max(60, _int("SAUDI_PRICES_TTL_SECONDS", 300)))
     saudi_free_fallback_enabled: bool = field(default_factory=lambda: _env("SAUDI_FREE_FALLBACK_ENABLED", "true").lower() == "true")
     saudi_exchange_endpoint: str = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENDPOINT"))
+    saudi_exchange_page_url: str = field(
+        default_factory=lambda: _env(
+            "SAUDI_EXCHANGE_PAGE_URL",
+            "https://www.saudiexchange.sa/wps/portal/saudiexchange/ourmarkets/main-market-watch?locale=ar",
+        )
+    )
     saudi_api_key: str = field(default_factory=lambda: _env("SAUDI_API_KEY"))
     saudi_api_cache_seconds: int = field(default_factory=lambda: max(60, _int("SAUDI_API_CACHE_SECONDS", 180)))
     saudi_api_rate_limit_per_minute: int = field(default_factory=lambda: max(5, _int("SAUDI_API_RATE_LIMIT_PER_MINUTE", 60)))
-    sahmk_api_key: str = field(default_factory=lambda: _env("SAHMK_API_KEY"))
-    sahmk_base_url: str = field(default_factory=lambda: _env("SAHMK_BASE_URL", "https://app.sahmk.sa/api/v1").rstrip("/"))
-    sahmk_sync_limit: int = field(default_factory=lambda: max(1, _int("SAHMK_SYNC_LIMIT", 450)))
-    simplescraper_api_key: str = field(default_factory=lambda: _env("SIMPLESCRAPER_API_KEY"))
-    simplescraper_saudi_api_url: str = field(default_factory=lambda: _env("SIMPLESCRAPER_SAUDI_API_URL"))
 
     saudi_open: str = field(default_factory=lambda: _env("SAUDI_MARKET_OPEN", "10:00"))
     saudi_close: str = field(default_factory=lambda: _env("SAUDI_MARKET_CLOSE", "15:00"))

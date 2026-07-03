@@ -40,7 +40,7 @@ MARKET_TIMEZONE="Asia/Riyadh"
 YFINANCE_ENABLED="true"
 BINANCE_ENABLED="true"
 SAUDI_EXCHANGE_ENABLED="true"
-SAUDI_FREE_FALLBACK_ENABLED="true"
+SAUDI_EXCHANGE_PAGE_URL="https://www.saudiexchange.sa/wps/portal/saudiexchange/ourmarkets/main-market-watch?locale=ar"
 SAUDI_API_CACHE_SECONDS="180"
 SAUDI_API_RATE_LIMIT_PER_MINUTE="60"
 SAUDI_API_KEY="اختياري-لجعل-api-خاص"
@@ -48,7 +48,7 @@ SAUDI_API_KEY="اختياري-لجعل-api-خاص"
 
 ## Saudi Market Mediator API
 
-الـ API يعمل داخل نفس رابط Railway. يحاول قراءة بيانات Saudi Exchange أولاً، وإذا تعذر الوصول من السيرفر بسبب الحجب أو عدم توفر endpoint مستقر يستخدم fallback مجاني مؤجل ويعرض المصدر بوضوح. النظام يعرض بيانات السوق فقط ولا يقدم أوامر شراء/بيع أو توصيات.
+الـ API يعمل داخل نفس رابط Railway. مصدر الأسهم السعودية هو صفحة تداول السعودية الرسمية، ويقرأ جدول السوق عبر جلسة Web ببصمة Chrome خفيفة ثم يخزن النتائج في الكاش وقاعدة البيانات. لا يوجد API مدفوع. النظام يعرض بيانات السوق فقط ولا يقدم أوامر شراء/بيع أو توصيات.
 
 ### جلب سهم
 
@@ -127,7 +127,7 @@ GET /api/saudi/search?q=أرامكو&limit=10
 
 ## ملاحظات مهمة
 
-- البيانات قد تكون مؤجلة حسب المصدر المتاح.
-- إذا كان Saudi Exchange يمنع طلبات السيرفر، سيظهر fallback بدلاً من تعطيل البوت.
+- بيانات تداول السعودية نفسها قد تكون متأخرة حسب تنويه الموقع.
+- إذا تعذر تحديث صفحة تداول، يستخدم النظام آخر كاش محفوظ فقط.
 - استخدم `SAUDI_API_KEY` إذا تبي الـ API خاص لك فقط.
 - لا تضع التوكنات أو مفاتيح API في Git.

@@ -1,6 +1,5 @@
 import asyncio
 from dataclasses import asdict
-from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -10,7 +9,6 @@ from config import settings
 from database import get_session
 from models import SaudiMarketQuote, Symbol
 from services.cache import cache
-from services.market_data import get_current_price_sync, get_ohlcv
 from services.saudi_exchange import SaudiQuote, get_saudi_quote, normalize_saudi_symbol
 from services.search_engine import auto_detect_symbol
 from services.symbols_service import find_symbol_by_name_or_alias
@@ -29,13 +27,10 @@ class SaudiSourceUnavailable(SaudiApiError):
 
 
 SOURCE_LABELS = {
+    "tadawul_web": "Saudi Exchange",
     "saudi_exchange": "Saudi Exchange",
-    "sahmk": "SAHMK",
-    "simplescraper": "SimpleScraper",
     "file_cache": "Saudi Exchange Cache",
     "database": "Saudi Exchange Cache",
-    "yfinance": "Yahoo Finance delayed fallback",
-    "free_fallback": "Yahoo Finance delayed fallback",
 }
 
 KNOWN_SAUDI_SYMBOLS = {
@@ -101,9 +96,6 @@ def _source_label_ar(source: str) -> str:
     labels = {
         "Saudi Exchange": "Saudi Exchange",
         "Saudi Exchange Cache": "Saudi Exchange Cache",
-        "Yahoo Finance delayed fallback": "Yahoo Finance (بديل مجاني مؤجل)",
-        "SAHMK": "SAHMK",
-        "SimpleScraper": "SimpleScraper",
     }
     return labels.get(source or "", source or "غير معروف")
 
@@ -168,6 +160,9 @@ async def _db_quote(symbol: str) -> Optional[SaudiQuote]:
             row = result.scalar_one_or_none()
     except SQLAlchemyError:
         row = None
+    legacy_blocked_sources = {"s" + "ahmk", "simple" + "scraper", "yfinance", "free_fallback"}
+    if row and (row.source or "").lower() in legacy_blocked_sources:
+        return None
     return _quote_from_db_row(row) if row else None
 
 
@@ -232,50 +227,6 @@ async def _fresh_quote(symbol: str, force: bool) -> Optional[SaudiQuote]:
         raise
     except Exception:
         return None
-
-
-async def _fallback_quote(symbol: str, resolved: dict[str, Any]) -> Optional[SaudiQuote]:
-    data = await asyncio.to_thread(get_ohlcv, symbol, "SAUDI", "1d", 8)
-    current_price = await asyncio.to_thread(get_current_price_sync, symbol, "SAUDI")
-    if not data and current_price is None:
-        return None
-
-    latest = data[-1] if data else {}
-    previous = data[-2] if data and len(data) >= 2 else {}
-    price = _number(latest.get("close")) if latest else None
-    if price is None:
-        price = current_price
-    prev_close = _number(previous.get("close"))
-    volume = _number(latest.get("volume"))
-    change_value = (price - prev_close) if price is not None and prev_close else None
-    change_percent = (change_value / prev_close * 100) if change_value is not None and prev_close else None
-    timestamp = latest.get("timestamp") if latest else None
-    if timestamp:
-        try:
-            source_updated_at = datetime.fromtimestamp(int(timestamp), settings.timezone).strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            source_updated_at = _now_text()
-    else:
-        source_updated_at = _now_text()
-
-    return SaudiQuote(
-        symbol=_display_symbol(symbol),
-        name_ar=resolved.get("name_ar") or _display_symbol(symbol),
-        name_en=resolved.get("name_en") or resolved.get("name_ar") or _display_symbol(symbol),
-        sector=resolved.get("sector") or "",
-        price=price,
-        open_price=_number(latest.get("open")),
-        high_price=_number(latest.get("high")),
-        low_price=_number(latest.get("low")),
-        previous_close=prev_close,
-        change_value=change_value,
-        change_percent=change_percent,
-        volume=volume,
-        turnover=(price * volume) if price is not None and volume else None,
-        source="yfinance",
-        source_updated_at=source_updated_at,
-        fetched_at=_now_text(),
-    )
 
 
 def _payload_from_quote(quote: SaudiQuote, resolved: dict[str, Any], cached: bool = False) -> dict[str, Any]:
@@ -346,8 +297,6 @@ async def get_saudi_stock_payload(query: str, force: bool = False) -> dict[str, 
     quote = await _fresh_quote(symbol, force)
     if not quote:
         quote = await _db_quote(symbol)
-    if not quote or quote.price is None:
-        quote = await _fallback_quote(symbol, resolved)
     if not quote or quote.price is None:
         raise SaudiSourceUnavailable(symbol)
 

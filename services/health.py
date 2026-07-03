@@ -99,13 +99,9 @@ async def _check_saudi_exchange() -> str:
         source = status.get("source") or "unknown"
         if count:
             return _ok(f"Saudi Exchange جاهز ({count} رمز، المصدر: {source})")
-        if status.get("has_sahmk"):
-            return _warn("SAHMK API موجود لكن لم يرجع أسعار بعد")
-        if status.get("has_simplescraper"):
-            return _warn("Saudi Exchange عنده رابط SimpleScraper لكن لم يرجع أسعار بعد")
-        if status.get("has_free_fallback"):
-            return _warn("السعودي بدون API رسمي؛ يعمل بخطة مجانية احتياطية وقد تتأخر الأسعار")
-        return _warn("السعودي يحتاج SAHMK_API_KEY أو رابط SimpleScraper أو كاش أسعار محفوظ")
+        if status.get("has_file_cache"):
+            return _warn("Saudi Exchange لم يحدث الآن؛ يعمل على آخر كاش محفوظ")
+        return _warn("Saudi Exchange web لم يرجع أسعار بعد")
     except Exception as exc:
         return _fail(f"Saudi Exchange: {_short(str(exc), 80)}")
 
