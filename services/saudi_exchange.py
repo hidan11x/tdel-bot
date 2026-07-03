@@ -145,6 +145,87 @@ def _extract_rows(payload: Any) -> list[dict[str, Any]]:
     return [payload] if any(key in payload for key in ("companySymbol", "symbol", "code")) else []
 
 
+def _sahmk_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json", "User-Agent": "TDawlXBot/2.0 sahmk"}
+    if settings.sahmk_api_key:
+        headers["X-API-Key"] = settings.sahmk_api_key
+    return headers
+
+
+def _sahmk_get(path: str, params: dict[str, Any] | None = None, timeout: int = 20) -> Any:
+    if not settings.sahmk_api_key:
+        return None
+    url = f"{settings.sahmk_base_url}/{path.lstrip('/')}"
+    response = requests.get(url, params=params or {}, headers=_sahmk_headers(), timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+
+
+def _fetch_sahmk_companies(timeout: int = 25) -> list[dict[str, Any]]:
+    companies: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 100
+    while len(companies) < settings.sahmk_sync_limit:
+        payload = _sahmk_get(
+            "/companies/",
+            {"market": "TASI", "limit": page_size, "offset": offset},
+            timeout=timeout,
+        )
+        rows = _extract_rows(payload)
+        if not rows:
+            break
+        companies.extend(rows)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return companies[: settings.sahmk_sync_limit]
+
+
+def _fetch_sahmk_single_quote(symbol: str, identifier: str = "", timeout: int = 15) -> Optional[SaudiQuote]:
+    normalized = normalize_saudi_symbol(symbol or identifier)
+    if not normalized and identifier:
+        normalized = str(identifier).strip()
+    if not normalized:
+        return None
+    params = {"identifier": identifier} if identifier else {}
+    payload = _sahmk_get(f"/quote/{normalized}/", params, timeout=timeout)
+    rows = _extract_rows(payload)
+    quotes = _normalize_quotes(rows, "sahmk")
+    return quotes[0] if quotes else None
+
+
+def _fetch_sahmk_quotes(timeout: int = 25) -> list[SaudiQuote]:
+    if not settings.sahmk_api_key:
+        return []
+    companies = _fetch_sahmk_companies(timeout=timeout)
+    symbols = [normalize_saudi_symbol(str(_first(row, ("symbol", "code", "ticker")) or "")) for row in companies]
+    symbols = [symbol for symbol in dict.fromkeys(symbols) if symbol]
+    if not symbols:
+        symbols = ["1120", "2222", "2010", "7010"]
+
+    try:
+        quotes: list[SaudiQuote] = []
+        for start in range(0, len(symbols), 50):
+            chunk = symbols[start : start + 50]
+            payload = _sahmk_get("/quotes/", {"symbols": ",".join(chunk)}, timeout=timeout)
+            quotes.extend(_normalize_quotes(_extract_rows(payload), "sahmk"))
+        if quotes:
+            return quotes
+    except Exception as exc:
+        logger.warning("SAHMK bulk quotes unavailable, falling back to single quotes: {}", exc)
+
+    quotes = []
+    for symbol in symbols[: settings.sahmk_sync_limit]:
+        try:
+            quote = _fetch_sahmk_single_quote(symbol, timeout=timeout)
+            if quote:
+                quotes.append(quote)
+        except Exception as exc:
+            logger.debug("SAHMK quote failed for {}: {}", symbol, exc)
+            continue
+    return quotes
+
+
 def _fetch_official_quotes(timeout: int = 20) -> list[SaudiQuote]:
     endpoint = settings.saudi_exchange_endpoint or DEFAULT_SAUDI_ENDPOINT
     headers = {
@@ -229,6 +310,7 @@ def refresh_saudi_quotes(force: bool = False) -> list[SaudiQuote]:
         return list(_quotes_cache.values())
 
     attempts = [
+        ("sahmk", _fetch_sahmk_quotes),
         ("saudi_exchange", _fetch_official_quotes),
         ("simplescraper", _fetch_simplescraper_quotes),
     ]
@@ -264,7 +346,18 @@ def get_saudi_quote(symbol: str, force_refresh: bool = False) -> Optional[SaudiQ
     normalized = normalize_saudi_symbol(symbol)
     quotes = refresh_saudi_quotes(force=force_refresh)
     by_symbol = {quote.symbol: quote for quote in quotes}
-    return by_symbol.get(normalized)
+    quote = by_symbol.get(normalized)
+    if quote or not settings.sahmk_api_key:
+        return quote
+    try:
+        quote = _fetch_sahmk_single_quote(normalized or symbol, identifier=symbol)
+        if quote:
+            _quotes_cache[quote.symbol] = quote
+            _save_file_cache(list(_quotes_cache.values()))
+            return quote
+    except Exception as exc:
+        logger.warning("SAHMK single quote fallback failed for {}: {}", symbol, exc)
+    return None
 
 
 def get_saudi_current_price(symbol: str) -> Optional[float]:
@@ -309,6 +402,7 @@ def get_saudi_status() -> dict[str, Any]:
         "source": _last_source,
         "count": len(quotes),
         "last_error": _last_error,
+        "has_sahmk": bool(settings.sahmk_api_key),
         "has_simplescraper": bool(settings.simplescraper_saudi_api_url),
     }
 

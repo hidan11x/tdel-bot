@@ -99,9 +99,11 @@ async def _check_saudi_exchange() -> str:
         source = status.get("source") or "unknown"
         if count:
             return _ok(f"Saudi Exchange جاهز ({count} رمز، المصدر: {source})")
+        if status.get("has_sahmk"):
+            return _warn("SAHMK API موجود لكن لم يرجع أسعار بعد")
         if status.get("has_simplescraper"):
             return _warn("Saudi Exchange عنده رابط SimpleScraper لكن لم يرجع أسعار بعد")
-        return _warn("Saudi Exchange يحتاج رابط SimpleScraper أو كاش أسعار محفوظ")
+        return _warn("السعودي يحتاج SAHMK_API_KEY أو رابط SimpleScraper أو كاش أسعار محفوظ")
     except Exception as exc:
         return _fail(f"Saudi Exchange: {_short(str(exc), 80)}")
 

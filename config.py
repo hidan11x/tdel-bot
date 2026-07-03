@@ -58,6 +58,9 @@ class Settings:
     saudi_exchange_enabled: bool = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENABLED", "true").lower() == "true")
     saudi_prices_ttl_seconds: int = field(default_factory=lambda: max(60, _int("SAUDI_PRICES_TTL_SECONDS", 300)))
     saudi_exchange_endpoint: str = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENDPOINT"))
+    sahmk_api_key: str = field(default_factory=lambda: _env("SAHMK_API_KEY"))
+    sahmk_base_url: str = field(default_factory=lambda: _env("SAHMK_BASE_URL", "https://app.sahmk.sa/api/v1").rstrip("/"))
+    sahmk_sync_limit: int = field(default_factory=lambda: max(1, _int("SAHMK_SYNC_LIMIT", 450)))
     simplescraper_api_key: str = field(default_factory=lambda: _env("SIMPLESCRAPER_API_KEY"))
     simplescraper_saudi_api_url: str = field(default_factory=lambda: _env("SIMPLESCRAPER_SAUDI_API_URL"))
 
