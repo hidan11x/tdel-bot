@@ -90,7 +90,7 @@ async def _check_ai() -> str:
 
 async def _check_saudi_exchange() -> str:
     if not settings.saudi_exchange_enabled:
-        return _warn("Saudi Exchange disabled")
+        return _warn("Saudi Exchange معطل من الإعدادات")
     try:
         from services.saudi_exchange import get_saudi_status
 
@@ -98,10 +98,10 @@ async def _check_saudi_exchange() -> str:
         count = int(status.get("count") or 0)
         source = status.get("source") or "unknown"
         if count:
-            return _ok(f"Saudi Exchange ready ({count} symbols, {source})")
+            return _ok(f"Saudi Exchange جاهز ({count} رمز، المصدر: {source})")
         if status.get("has_simplescraper"):
-            return _warn("Saudi Exchange has SimpleScraper URL but no prices yet")
-        return _warn("Saudi Exchange needs SimpleScraper fallback or cached prices")
+            return _warn("Saudi Exchange عنده رابط SimpleScraper لكن لم يرجع أسعار بعد")
+        return _warn("Saudi Exchange يحتاج رابط SimpleScraper أو كاش أسعار محفوظ")
     except Exception as exc:
         return _fail(f"Saudi Exchange: {_short(str(exc), 80)}")
 
