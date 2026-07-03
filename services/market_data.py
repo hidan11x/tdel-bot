@@ -218,6 +218,32 @@ def _crypto_current_price(symbol: str) -> Optional[float]:
     return YahooFinanceProvider.get_current_price(symbol, "CRYPTO")
 
 
+def _saudi_free_historical(symbol: str, interval: str, outputsize: int) -> Optional[List[dict]]:
+    if not settings.saudi_free_fallback_enabled or not settings.yfinance_enabled:
+        return None
+    try:
+        result = YahooFinanceProvider.get_historical(symbol, interval, period="6mo", market="SAUDI")
+        if result:
+            logger.warning("Saudi free fallback used for historical data: {}", symbol)
+            return result["data"][-outputsize:]
+    except Exception as exc:
+        logger.warning("Saudi free fallback historical failed for {}: {}", symbol, exc)
+    return None
+
+
+def _saudi_free_current_price(symbol: str) -> Optional[float]:
+    if not settings.saudi_free_fallback_enabled or not settings.yfinance_enabled:
+        return None
+    try:
+        price = YahooFinanceProvider.get_current_price(symbol, "SAUDI")
+        if price is not None:
+            logger.warning("Saudi free fallback used for current price: {}", symbol)
+        return price
+    except Exception as exc:
+        logger.warning("Saudi free fallback price failed for {}: {}", symbol, exc)
+        return None
+
+
 def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 200) -> List[float]:
     cache_key = market_cache_key("closes", market, symbol, interval, outputsize)
     cached = cache.get(cache_key)
@@ -229,6 +255,8 @@ def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 
         from services.saudi_exchange import get_saudi_ohlcv
 
         data = get_saudi_ohlcv(symbol, outputsize)
+        if not data or len(data) < 30:
+            data = _saudi_free_historical(symbol, interval, outputsize)
     elif market_key == "CRYPTO":
         data = _crypto_historical(symbol, interval, outputsize)
     else:
@@ -256,6 +284,8 @@ def get_ohlcv(symbol: str, market: str, interval: str, outputsize: int = 200) ->
         from services.saudi_exchange import get_saudi_ohlcv
 
         data = get_saudi_ohlcv(symbol, outputsize)
+        if not data or len(data) < 30:
+            data = _saudi_free_historical(symbol, interval, outputsize)
     elif market_key == "CRYPTO":
         data = _crypto_historical(symbol, interval, outputsize)
     else:
@@ -282,6 +312,8 @@ def get_current_price_sync(symbol: str, market: str) -> Optional[float]:
         from services.saudi_exchange import get_saudi_current_price
 
         price = get_saudi_current_price(symbol)
+        if price is None:
+            price = _saudi_free_current_price(symbol)
     elif market_key == "CRYPTO":
         price = _crypto_current_price(symbol)
     else:

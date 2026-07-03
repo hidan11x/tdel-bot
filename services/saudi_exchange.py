@@ -432,6 +432,7 @@ def get_saudi_status() -> dict[str, Any]:
         "last_error": _last_error,
         "has_sahmk": bool(settings.sahmk_api_key),
         "has_simplescraper": bool(settings.simplescraper_saudi_api_url),
+        "has_free_fallback": bool(settings.saudi_free_fallback_enabled and settings.yfinance_enabled),
     }
 
 

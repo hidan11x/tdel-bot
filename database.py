@@ -88,3 +88,27 @@ def _run_lightweight_migrations(sync_conn):
             sync_conn.execute(text(f"ALTER TABLE price_trackers ADD COLUMN quantity {float_type}"))
         if "tracker_type" not in columns:
             sync_conn.execute(text("ALTER TABLE price_trackers ADD COLUMN tracker_type VARCHAR DEFAULT 'price'"))
+
+    if "symbols" in tables:
+        corrections = [
+            ("8010.SR", "SAUDI", "التعاونية", "Tawuniya"),
+            ("8020.SR", "SAUDI", "ملاذ للتأمين", "Malath Insurance"),
+            ("8050.SR", "SAUDI", "سلامة للتأمين", "Salama Cooperative Insurance"),
+        ]
+        for symbol, market, name_ar, name_en in corrections:
+            sync_conn.execute(
+                text(
+                    "UPDATE symbols SET name_ar = :name_ar, name_en = :name_en, "
+                    "sector = COALESCE(sector, :sector), category = COALESCE(category, :sector), "
+                    "exchange = COALESCE(exchange, 'Saudi Exchange'), currency = 'SAR', "
+                    "asset_type = 'stock', is_active = TRUE "
+                    "WHERE symbol = :symbol AND market = :market"
+                ),
+                {
+                    "symbol": symbol,
+                    "market": market,
+                    "name_ar": name_ar,
+                    "name_en": name_en,
+                    "sector": "التأمين",
+                },
+            )

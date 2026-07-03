@@ -57,6 +57,7 @@ class Settings:
     news_interval_hours: int = field(default_factory=lambda: max(1, _int("NEWS_INTERVAL_HOURS", 12)))
     saudi_exchange_enabled: bool = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENABLED", "true").lower() == "true")
     saudi_prices_ttl_seconds: int = field(default_factory=lambda: max(60, _int("SAUDI_PRICES_TTL_SECONDS", 300)))
+    saudi_free_fallback_enabled: bool = field(default_factory=lambda: _env("SAUDI_FREE_FALLBACK_ENABLED", "true").lower() == "true")
     saudi_exchange_endpoint: str = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENDPOINT"))
     sahmk_api_key: str = field(default_factory=lambda: _env("SAHMK_API_KEY"))
     sahmk_base_url: str = field(default_factory=lambda: _env("SAHMK_BASE_URL", "https://app.sahmk.sa/api/v1").rstrip("/"))
