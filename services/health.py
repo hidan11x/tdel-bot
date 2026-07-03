@@ -88,6 +88,24 @@ async def _check_ai() -> str:
     return _ok(f"Gemini AI جاهز ({settings.gemini_model})")
 
 
+async def _check_saudi_exchange() -> str:
+    if not settings.saudi_exchange_enabled:
+        return _warn("Saudi Exchange disabled")
+    try:
+        from services.saudi_exchange import get_saudi_status
+
+        status = await asyncio.to_thread(get_saudi_status)
+        count = int(status.get("count") or 0)
+        source = status.get("source") or "unknown"
+        if count:
+            return _ok(f"Saudi Exchange ready ({count} symbols, {source})")
+        if status.get("has_simplescraper"):
+            return _warn("Saudi Exchange has SimpleScraper URL but no prices yet")
+        return _warn("Saudi Exchange needs SimpleScraper fallback or cached prices")
+    except Exception as exc:
+        return _fail(f"Saudi Exchange: {_short(str(exc), 80)}")
+
+
 async def build_admin_health_report() -> str:
     started = time.perf_counter()
     now_local = settings.now()
@@ -133,7 +151,12 @@ async def build_admin_health_report() -> str:
     except Exception as exc:
         db_line = _fail(f"{_safe_database_label()}: {_short(str(exc), 90)}")
 
-    provider_lines = await asyncio.gather(_check_yfinance(), _check_binance(), _check_ai())
+    provider_lines = await asyncio.gather(
+        _check_yfinance(),
+        _check_binance(),
+        _check_saudi_exchange(),
+        _check_ai(),
+    )
     elapsed_ms = round((time.perf_counter() - started) * 1000)
 
     lines = [

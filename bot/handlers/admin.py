@@ -295,6 +295,8 @@ async def cb_admin_handler(cq: CallbackQuery, state: FSMContext = None):
         await _admin_indicators(cq)
     elif data == "admin_sync_symbols":
         await _admin_sync_symbols(cq)
+    elif data == "admin_sync_saudi_prices":
+        await _admin_sync_saudi_prices(cq)
     elif data == "admin_backup":
         await _admin_backup(cq)
     elif data == "admin_update_notify":
@@ -1208,6 +1210,30 @@ async def _admin_sync_symbols(cq: CallbackQuery):
     except Exception as exc:
         await cq.message.edit_text(
             f"❌ تعذر تحديث الرموز حالياً:\n{str(exc)[:500]}",
+            reply_markup=back_button("admin_panel"),
+        )
+
+
+async def _admin_sync_saudi_prices(cq: CallbackQuery):
+    await cq.answer("جاري تحديث أسعار السعودي...", show_alert=True)
+    await cq.message.edit_text("🇸🇦 جاري تحديث أسعار السوق السعودي. انتظر شوي...")
+    try:
+        from services.saudi_exchange import refresh_and_persist_saudi_quotes
+
+        result = await refresh_and_persist_saudi_quotes(True)
+        lines = [
+            "✅ تم تحديث أسعار السوق السعودي",
+            "",
+            f"الرموز التي لها أسعار: {result['count']}",
+            f"رموز جديدة مضافة: {result['inserted_symbols']}",
+            f"المصدر: {result['source']}",
+        ]
+        if result.get("last_error"):
+            lines.append(f"ملاحظة المصدر البديل: {result['last_error'][:300]}")
+        await cq.message.edit_text("\n".join(lines), reply_markup=back_button("admin_panel"))
+    except Exception as exc:
+        await cq.message.edit_text(
+            f"❌ تعذر تحديث أسعار السعودي:\n{str(exc)[:500]}",
             reply_markup=back_button("admin_panel"),
         )
 

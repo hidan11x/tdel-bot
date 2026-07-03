@@ -224,10 +224,15 @@ def get_close_prices(symbol: str, market: str, interval: str, outputsize: int = 
     if cached is not None:
         return list(cached)
 
-    provider = DataProviderFactory.get_provider(market)
-    if market.upper() == "CRYPTO":
+    market_key = market.upper()
+    if market_key == "SAUDI":
+        from services.saudi_exchange import get_saudi_ohlcv
+
+        data = get_saudi_ohlcv(symbol, outputsize)
+    elif market_key == "CRYPTO":
         data = _crypto_historical(symbol, interval, outputsize)
     else:
+        provider = DataProviderFactory.get_provider(market)
         result = provider.get_historical(symbol, interval, period="6mo", market=market)
         if result:
             data = result["data"][-outputsize:]
@@ -246,10 +251,15 @@ def get_ohlcv(symbol: str, market: str, interval: str, outputsize: int = 200) ->
     if cached is not None:
         return list(cached)
 
-    provider = DataProviderFactory.get_provider(market)
-    if market.upper() == "CRYPTO":
+    market_key = market.upper()
+    if market_key == "SAUDI":
+        from services.saudi_exchange import get_saudi_ohlcv
+
+        data = get_saudi_ohlcv(symbol, outputsize)
+    elif market_key == "CRYPTO":
         data = _crypto_historical(symbol, interval, outputsize)
     else:
+        provider = DataProviderFactory.get_provider(market)
         result = provider.get_historical(symbol, interval, period="6mo", market=market)
         if result:
             data = result["data"][-outputsize:]
@@ -267,10 +277,15 @@ def get_current_price_sync(symbol: str, market: str) -> Optional[float]:
     if cached is not None:
         return float(cached)
 
-    provider = DataProviderFactory.get_provider(market)
-    if market.upper() == "CRYPTO":
+    market_key = market.upper()
+    if market_key == "SAUDI":
+        from services.saudi_exchange import get_saudi_current_price
+
+        price = get_saudi_current_price(symbol)
+    elif market_key == "CRYPTO":
         price = _crypto_current_price(symbol)
     else:
+        provider = DataProviderFactory.get_provider(market)
         price = provider.get_current_price(symbol, market)
 
     if price is not None:

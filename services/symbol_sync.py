@@ -6,7 +6,6 @@ import re
 from typing import Any
 
 import requests
-import yfinance as yf
 from loguru import logger
 from sqlalchemy import select
 
@@ -18,7 +17,6 @@ from models import Symbol
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
 STOCKANALYSIS_SAUDI_URL = "https://stockanalysis.com/list/saudi-stock-exchange/"
-SAUDI_CODE_RANGES = ((1000, 9999),)
 
 
 def _get_text(url: str, timeout: int = 25) -> str:
@@ -226,52 +224,40 @@ def _parse_stockanalysis_saudi(text: str, limit: int) -> list[dict[str, Any]]:
     return items
 
 
-def _probe_saudi_symbol(symbol: str) -> dict[str, Any] | None:
-    yahoo_symbol = f"{symbol}.SR"
-    try:
-        history = yf.Ticker(yahoo_symbol).history(period="5d", interval="1d")
-    except Exception:
-        return None
-    if history is None or history.empty:
-        return None
-    return {
-        "market": "SAUDI",
-        "symbol": symbol,
-        "yahoo_symbol": yahoo_symbol,
-        "name_ar": symbol,
-        "name_en": symbol,
-        "sector": "Saudi Listed",
-        "category": "Saudi Listed",
-        "exchange": "Saudi Exchange",
-        "currency": "SAR",
-        "asset_type": "stock",
-    }
-
-
-async def _probe_saudi_candidates(candidates: list[str], limit: int) -> list[dict[str, Any]]:
-    semaphore = asyncio.Semaphore(24)
-
-    async def check(symbol: str) -> dict[str, Any] | None:
-        async with semaphore:
-            return await asyncio.to_thread(_probe_saudi_symbol, symbol)
-
-    found: list[dict[str, Any]] = []
-    for start in range(0, len(candidates), 240):
-        batch = candidates[start : start + 240]
-        results = await asyncio.gather(*(check(symbol) for symbol in batch))
-        found.extend(item for item in results if item)
-        if len(found) >= limit:
-            return found[:limit]
-    return found[:limit]
-
-
 async def sync_saudi_symbols(limit: int = 1200) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     try:
+        from services.saudi_exchange import persist_saudi_quotes, refresh_saudi_quotes
+
+        quotes = await asyncio.to_thread(refresh_saudi_quotes, True)
+        if quotes:
+            await persist_saudi_quotes(quotes)
+            for quote in quotes[:limit]:
+                items.append(
+                    {
+                        "market": "SAUDI",
+                        "symbol": quote.symbol,
+                        "yahoo_symbol": quote.symbol,
+                        "name_ar": quote.name_ar or quote.symbol,
+                        "name_en": quote.name_en or quote.name_ar or quote.symbol,
+                        "sector": quote.sector or "Saudi Listed",
+                        "category": quote.sector or "Saudi Listed",
+                        "exchange": "Saudi Exchange",
+                        "currency": "SAR",
+                        "asset_type": "stock",
+                    }
+                )
+                seen.add(quote.symbol)
+    except Exception as exc:
+        logger.warning("Saudi official symbol sync failed: {}", exc)
+
+    try:
         text = await asyncio.to_thread(_get_text, STOCKANALYSIS_SAUDI_URL, 30)
         for item in _parse_stockanalysis_saudi(text, limit):
+            if item["symbol"] in seen:
+                continue
             items.append(item)
             seen.add(item["symbol"])
     except Exception as exc:
@@ -299,19 +285,6 @@ async def sync_saudi_symbols(limit: int = 1200) -> dict[str, Any]:
             }
         )
         seen.add(current.symbol)
-
-    if len(items) < 250:
-        candidates = sorted(
-            {
-                f"{code:04d}"
-                for start, end in SAUDI_CODE_RANGES
-                for code in range(start, end + 1)
-            }
-            - seen
-        )
-        for item in await _probe_saudi_candidates(candidates, limit - len(items)):
-            items.append(item)
-            seen.add(item["symbol"])
 
     added = await _upsert_symbols(items[:limit])
     return {"market": "SAUDI", "fetched": len(items[:limit]), "added": added}

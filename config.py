@@ -55,6 +55,11 @@ class Settings:
     )
     news_notifications_enabled: bool = field(default_factory=lambda: _env("NEWS_NOTIFICATIONS_ENABLED", "false").lower() == "true")
     news_interval_hours: int = field(default_factory=lambda: max(1, _int("NEWS_INTERVAL_HOURS", 12)))
+    saudi_exchange_enabled: bool = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENABLED", "true").lower() == "true")
+    saudi_prices_ttl_seconds: int = field(default_factory=lambda: max(60, _int("SAUDI_PRICES_TTL_SECONDS", 300)))
+    saudi_exchange_endpoint: str = field(default_factory=lambda: _env("SAUDI_EXCHANGE_ENDPOINT"))
+    simplescraper_api_key: str = field(default_factory=lambda: _env("SIMPLESCRAPER_API_KEY"))
+    simplescraper_saudi_api_url: str = field(default_factory=lambda: _env("SIMPLESCRAPER_SAUDI_API_URL"))
 
     saudi_open: str = field(default_factory=lambda: _env("SAUDI_MARKET_OPEN", "10:00"))
     saudi_close: str = field(default_factory=lambda: _env("SAUDI_MARKET_CLOSE", "15:00"))

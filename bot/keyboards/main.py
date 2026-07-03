@@ -249,6 +249,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         ("📈 الأسواق", "admin_markets"),
         ("🔣 الرموز", "admin_symbols"),
         ("🌍 تحديث الرموز", "admin_sync_symbols"),
+        ("🇸🇦 تحديث أسعار السعودي", "admin_sync_saudi_prices"),
         ("📋 المؤشرات", "admin_indicators"),
         ("💾 نسخة احتياطية", "admin_backup"),
         ("📢 إشعار تحديث", "admin_update_notify"),

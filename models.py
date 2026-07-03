@@ -365,6 +365,46 @@ class DataProviderLog(Base):
     created_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
 
 
+class SaudiMarketQuote(Base):
+    __tablename__ = "saudi_market_quotes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String, unique=True)
+    name_ar: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    name_en: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sector: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    open_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    high_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    previous_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    change_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    change_percent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    turnover: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    bid_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ask_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String, default="saudi_exchange")
+    source_updated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow, onupdate=_utcnow)
+
+
+class SaudiMarketSnapshot(Base):
+    __tablename__ = "saudi_market_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    open_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    high_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    previous_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source_updated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(_DateTime(), default=_utcnow)
+
+
 class PortfolioPosition(Base):
     __tablename__ = "portfolio_positions"
 
