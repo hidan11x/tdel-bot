@@ -415,7 +415,7 @@ def symbol_detail_menu(symbol_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def profile_menu(daily_enabled: bool = True) -> InlineKeyboardMarkup:
+def profile_menu(daily_enabled: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="👤 معلوماتي", callback_data="profile_info")
     builder.button(text="💳 الاشتراك", callback_data="subscription")

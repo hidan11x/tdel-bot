@@ -467,4 +467,4 @@ class ReportScheduler:
             )
             result = await session.execute(stmt)
             users = result.scalars().all()
-            return [u for u in users if getattr(u, "daily_report", True)]
+            return [u for u in users if getattr(u, "daily_report", False)]

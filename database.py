@@ -41,6 +41,17 @@ def _run_lightweight_migrations(sync_conn):
     tables = set(inspector.get_table_names())
     dialect = sync_conn.dialect.name
 
+    if "app_migrations" not in tables:
+        sync_conn.execute(
+            text(
+                "CREATE TABLE app_migrations ("
+                "migration_key VARCHAR PRIMARY KEY, "
+                "applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        )
+        tables.add("app_migrations")
+
     if "portfolio_positions" in tables:
         columns = {col["name"] for col in inspector.get_columns("portfolio_positions")}
         float_type = "DOUBLE PRECISION" if dialect == "postgresql" else "FLOAT"
@@ -62,6 +73,9 @@ def _run_lightweight_migrations(sync_conn):
 
     if "users" in tables:
         columns = {col["name"] for col in inspector.get_columns("users")}
+        if "daily_report" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN daily_report BOOLEAN DEFAULT FALSE"))
+            columns.add("daily_report")
         if "referral_reward_claimed" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN referral_reward_claimed BOOLEAN DEFAULT FALSE"))
         if "affiliate_partner_id" not in columns:
@@ -72,6 +86,18 @@ def _run_lightweight_migrations(sync_conn):
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN experience_level VARCHAR"))
         if "onboarding_complete" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_complete BOOLEAN DEFAULT FALSE"))
+
+        migration_key = "daily_report_requires_user_opt_in"
+        marker = sync_conn.execute(
+            text("SELECT migration_key FROM app_migrations WHERE migration_key = :key"),
+            {"key": migration_key},
+        ).fetchone()
+        if not marker:
+            sync_conn.execute(text("UPDATE users SET daily_report = FALSE WHERE daily_report = TRUE OR daily_report IS NULL"))
+            sync_conn.execute(
+                text("INSERT INTO app_migrations (migration_key) VALUES (:key)"),
+                {"key": migration_key},
+            )
 
     if "price_trackers" in tables:
         columns = {col["name"] for col in inspector.get_columns("price_trackers")}

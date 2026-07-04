@@ -113,6 +113,7 @@ async def cmd_start(message: Message, command=None, state=None):
                 first_name=message.from_user.first_name or message.from_user.username or str(telegram_id),
                 language_code=message.from_user.language_code or "ar",
                 referral_code=f"ref{telegram_id}",
+                daily_report=False,
             )
             session.add(user)
             await session.commit()
@@ -461,7 +462,7 @@ async def cmd_profile(message: Message):
     }
 
     text = format_profile(user, info)
-    daily = getattr(user, "daily_report", True)
+    daily = getattr(user, "daily_report", False)
     await message.answer(text, reply_markup=profile_menu(daily))
 
 
@@ -495,7 +496,7 @@ async def cb_my_profile(callback: CallbackQuery):
     }
 
     text = format_profile(user, info)
-    daily = getattr(user, "daily_report", True)
+    daily = getattr(user, "daily_report", False)
     await callback.message.edit_text(text, reply_markup=profile_menu(daily))
 
 
@@ -810,7 +811,7 @@ async def cb_profile_usage(callback: CallbackQuery):
         f"المسح اليومي: {user.scans_today}/{limits['scans_daily'] if limits['scans_daily'] != -1 else '∞'}\n"
         f"آخر مسح: {user.last_scan_date or 'لا يوجد'}"
     )
-    daily = getattr(user, "daily_report", True)
+    daily = getattr(user, "daily_report", False)
     await callback.message.edit_text(text, reply_markup=profile_menu(daily))
 
 
@@ -824,7 +825,7 @@ async def cb_toggle_daily_report(callback: CallbackQuery):
         )
         user = result.scalar_one_or_none()
         if user:
-            current = getattr(user, "daily_report", True)
+            current = getattr(user, "daily_report", False)
             user.daily_report = not current
             await session.commit()
             status = "تفعيل" if user.daily_report else "إلغاء"

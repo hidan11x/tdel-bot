@@ -1125,7 +1125,7 @@ async def handle_user_search(msg: Message, state: FSMContext):
         f"الاشتراك: {u.subscription_start} → {u.subscription_end}\n"
         f"الحالة: {'نشط' if u.is_active else 'غير نشط'}{' | محظور' if u.is_banned else ''}\n"
         f"الفحوصات اليوم: {u.scans_today}\n"
-        f"التقارير اليومية: {'مفعلة' if getattr(u, 'daily_report', True) else 'معطلة'}\n"
+        f"التقارير اليومية: {'مفعلة' if getattr(u, 'daily_report', False) else 'معطلة'}\n"
         f"آخر دخول: {u.last_active}"
     )
     await msg.answer(text, reply_markup=admin_users_actions(u.telegram_id))

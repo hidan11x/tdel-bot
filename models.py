@@ -50,7 +50,7 @@ class User(Base):
     referral_code: Mapped[str] = mapped_column(String, unique=True)
     referred_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     affiliate_partner_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("affiliate_partners.id"), nullable=True)
-    daily_report: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_report: Mapped[bool] = mapped_column(Boolean, default=False)
     referral_days: Mapped[int] = mapped_column(Integer, default=0)
     language: Mapped[str] = mapped_column(String, default="ar")
     preferred_market: Mapped[Optional[str]] = mapped_column(String, nullable=True)
